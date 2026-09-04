@@ -8,7 +8,7 @@ import Testing
         let fixture = try Fixture()
         let database = try MessagesDatabase(path: fixture.path)
         let chats = try database.chats(limit: 10, before: nil)
-        #expect(chats.items.count == 7)
+        #expect(chats.items.count == 10)
         #expect(chats.items[0].displayName == "Fixture Chat")
         #expect(chats.items[0].messageCount == 3)
 
@@ -53,7 +53,7 @@ import Testing
         #expect(messages.items.count == 3)
     }
 
-    @Test func enrichesChatNamesAndAlwaysProvidesFallbacks() throws {
+    @Test func classifiesLiveChatFormsAndResolvesDirectNames() throws {
         let fixture = try Fixture()
         let resolver = ChatNameResolver(
             emailLookup: { $0 == "friend@example.invalid" ? "Email Friend" : nil },
@@ -62,15 +62,19 @@ import Testing
             .chats(limit: 20, before: nil).items.map(\.displayName)
         #expect(resolved.contains("Fixture Chat"))
         #expect(resolved.contains("Email Friend"))
+        #expect(!resolved.contains("Stale Email Name"))
         #expect(resolved.contains("Phone Friend"))
         #expect(resolved.contains("missing@example.invalid"))
         #expect(resolved.contains("Group chat"))
+        #expect(resolved.contains("Named Group"))
         #expect(resolved.allSatisfy { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
 
         let unavailable = try MessagesDatabase(path: fixture.path)
             .chats(limit: 20, before: nil).items.map(\.displayName)
-        #expect(unavailable.contains("friend@example.invalid"))
+        #expect(unavailable.contains("Stale Email Name"))
         #expect(unavailable.contains("+1 (415) 555-0100"))
+        #expect(unavailable.contains("denied@example.invalid"))
+        #expect(unavailable.filter { $0 == "Group chat" }.count == 2)
         #expect(unavailable.allSatisfy { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
     }
 
@@ -126,15 +130,20 @@ private final class Fixture {
             CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT, display_name TEXT, service_name TEXT, chat_identifier TEXT, style INTEGER, is_archived INTEGER, is_deleted INTEGER);
             CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB, date INTEGER, is_from_me INTEGER, handle_id INTEGER, service TEXT, item_type INTEGER, group_action_type INTEGER, associated_message_type INTEGER, is_deleted INTEGER);
             CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER);
+            CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER);
             CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT);
             INSERT INTO chat VALUES (1, 'iMessage;-;fixture@example.invalid', 'Fixture Chat', 'iMessage', 'fixture@example.invalid', 43, 0, 0);
             INSERT INTO chat VALUES (2, 'iMessage;-;older@example.invalid', 'Older Chat', 'iMessage', 'older@example.invalid', 43, 0, 0);
             INSERT INTO chat VALUES (3, 'iMessage;-;body-edge-cases', 'Body Edge Cases', 'iMessage', 'body-edge-cases', 43, 0, 0);
-            INSERT INTO chat VALUES (4, 'any;-;friend@example.invalid', NULL, 'iMessage', 'friend@example.invalid', 43, 0, 0);
-            INSERT INTO chat VALUES (5, 'any;-;+1 (415) 555-0100', '', 'iMessage', '+1 (415) 555-0100', 43, 0, 0);
+            INSERT INTO chat VALUES (4, 'any;-;friend@example.invalid', 'Stale Email Name', 'iMessage', 'friend@example.invalid', 45, 0, 0);
+            INSERT INTO chat VALUES (5, 'any;-;+1 (415) 555-0100', '', 'iMessage', '+1 (415) 555-0100', 45, 0, 0);
             INSERT INTO chat VALUES (6, 'any;-;missing@example.invalid', NULL, 'iMessage', NULL, 43, 0, 0);
             INSERT INTO chat VALUES (7, 'iMessage;+;group-id', '   ', 'iMessage', 'group-id', 45, 0, 0);
+            INSERT INTO chat VALUES (8, 'iMessage;+;named-group-id', 'Named Group', 'iMessage', 'named-group-id', 43, 0, 0);
+            INSERT INTO chat VALUES (9, 'any;-;denied@example.invalid', NULL, 'iMessage', 'denied@example.invalid', 45, 0, 0);
+            INSERT INTO chat VALUES (10, 'iMessage;-;multi-participant-id', '', 'iMessage', 'multi-participant-id', 43, 0, 0);
             INSERT INTO handle VALUES (1, 'fixture@example.invalid');
+            INSERT INTO handle VALUES (2, 'second@example.invalid');
             INSERT INTO message VALUES (1, 'm1', 'first', NULL, 100, 0, 1, 'iMessage', 0, 0, 0, 0);
             INSERT INTO message VALUES (2, 'm2', 'second', NULL, 200, 1, NULL, 'iMessage', 0, 0, 0, 0);
             INSERT INTO message VALUES (4, 'reaction', 'liked', NULL, 400, 0, 1, 'iMessage', 0, 0, 2000, 0);
@@ -152,6 +161,11 @@ private final class Fixture {
             INSERT INTO message VALUES (13, 'missing-chat', 'missing', NULL, 30, 0, 1, 'iMessage', 0, 0, 0, 0);
             INSERT INTO message VALUES (14, 'group-chat', 'group', NULL, 5, 0, 1, 'iMessage', 0, 0, 0, 0);
             INSERT INTO chat_message_join VALUES (4, 11), (5, 12), (6, 13), (7, 14);
+            INSERT INTO message VALUES (15, 'named-group-chat', 'named group', NULL, 4, 0, 1, 'iMessage', 0, 0, 0, 0);
+            INSERT INTO message VALUES (16, 'denied-chat', 'denied', NULL, 3, 0, 1, 'iMessage', 0, 0, 0, 0);
+            INSERT INTO message VALUES (17, 'multi-chat', 'multi', NULL, 2, 0, 1, 'iMessage', 0, 0, 0, 0);
+            INSERT INTO chat_message_join VALUES (8, 15), (9, 16), (10, 17);
+            INSERT INTO chat_handle_join VALUES (1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1), (7, 1), (8, 1), (9, 1), (10, 1), (10, 2);
             """
         guard sqlite3_exec(db, schema, nil, nil, nil) == SQLITE_OK else { throw FixtureError.create }
         let archive = NSArchiver.archivedData(withRootObject: NSAttributedString(string: "third from archive"))

@@ -66,6 +66,8 @@ elif [[ -z "$identity" ]]; then
   fi
 fi
 
-codesign --force --options runtime --sign "$identity" --timestamp=none "$app" >/dev/null
+codesign --force --options runtime \
+  --entitlements "$root/macos/Natterwire/Natterwire.entitlements" \
+  --sign "$identity" --timestamp=none "$app" >/dev/null
 codesign --verify --deep --strict "$app"
 printf '%s\n' "$app"

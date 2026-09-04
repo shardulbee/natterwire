@@ -97,10 +97,12 @@ public final class MessagesDatabase: @unchecked Sendable {
         let display = chatColumns.contains("display_name") ? "c.display_name" : "NULL"
         let service = chatColumns.contains("service_name") ? "c.service_name" : "NULL"
         let identifier = chatColumns.contains("chat_identifier") ? "c.chat_identifier" : "NULL"
-        let style = chatColumns.contains("style") ? "c.style" : "NULL"
+        let participantCount = Self.tableExists("chat_handle_join", db: db)
+            ? "(SELECT COUNT(*) FROM chat_handle_join chj WHERE chj.chat_id = c.ROWID)"
+            : "0"
         let sql = """
             SELECT c.guid, \(display), \(service), MAX(m.date), COUNT(m.ROWID), c.ROWID,
-                   \(identifier), \(style)
+                   \(identifier), \(participantCount)
             FROM chat c
             JOIN chat_message_join cmj ON cmj.chat_id = c.ROWID
             JOIN message m ON m.ROWID = cmj.message_id
@@ -131,7 +133,7 @@ public final class MessagesDatabase: @unchecked Sendable {
                     explicit: text(statement, 1),
                     guid: guid,
                     identifier: text(statement, 6),
-                    style: optionalInt64(statement, 7)),
+                    participantCount: sqlite3_column_int64(statement, 7)),
                 service: text(statement, 2),
                 lastMessageAt: Self.dateString(date),
                 messageCount: sqlite3_column_int64(statement, 4)
@@ -147,16 +149,16 @@ public final class MessagesDatabase: @unchecked Sendable {
         explicit: String?,
         guid: String,
         identifier: String?,
-        style: Int64?
+        participantCount: Int64
     ) -> String {
-        if let explicit, !explicit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return explicit
+        let explicit = explicit.flatMap {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
         }
-        if style == 45 || guid.contains(";+;") { return "Group chat" }
+        if guid.contains(";+;") || participantCount > 1 { return explicit ?? "Group chat" }
         let handle = identifier?.trimmingCharacters(in: .whitespacesAndNewlines)
         let fallback = handle.flatMap { $0.isEmpty ? nil : $0 } ?? Self.directHandle(from: guid)
-        guard let fallback else { return "Chat" }
-        return nameResolver.name(for: fallback) ?? fallback
+        if let fallback, let resolved = nameResolver.name(for: fallback) { return resolved }
+        return explicit ?? fallback ?? "Chat"
     }
 
     private static func directHandle(from guid: String) -> String? {
@@ -251,6 +253,20 @@ public final class MessagesDatabase: @unchecked Sendable {
         return result
     }
 
+    private static func tableExists(_ table: String, db: OpaquePointer) -> Bool {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(
+            db,
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            -1,
+            &statement,
+            nil
+        ) == SQLITE_OK, let statement else { return false }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, table, -1, transient)
+        return sqlite3_step(statement) == SQLITE_ROW
+    }
+
     private func prepare(_ sql: String) throws -> OpaquePointer {
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
@@ -284,10 +300,6 @@ public final class MessagesDatabase: @unchecked Sendable {
         guard sqlite3_column_type(statement, index) == SQLITE_BLOB,
               let bytes = sqlite3_column_blob(statement, index) else { return nil }
         return Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, index)))
-    }
-
-    private func optionalInt64(_ statement: OpaquePointer, _ index: Int32) -> Int64? {
-        sqlite3_column_type(statement, index) == SQLITE_NULL ? nil : sqlite3_column_int64(statement, index)
     }
 
     private static func bounded(_ limit: Int) -> Int { min(max(limit, 1), 100) }
