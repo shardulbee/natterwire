@@ -117,7 +117,9 @@ public final class MessagesDatabase: @unchecked Sendable {
         let display = chatColumns.contains("display_name") ? "c.display_name" : "NULL"
         let service = chatColumns.contains("service_name") ? "c.service_name" : "NULL"
         let identifier = chatColumns.contains("chat_identifier") ? "c.chat_identifier" : "NULL"
-        let participantCount = Self.tableExists("chat_handle_join", db: db)
+        let hasParticipantTable = Self.tableExists("chat_handle_join", db: db)
+        let canResolveParticipants = hasParticipantTable && Self.tableExists("handle", db: db)
+        let participantCount = hasParticipantTable
             ? "(SELECT COUNT(*) FROM chat_handle_join chj WHERE chj.chat_id = c.ROWID)"
             : "0"
         let pinColumns = [
@@ -170,11 +172,13 @@ public final class MessagesDatabase: @unchecked Sendable {
             let pinOrder = sqlite3_column_int64(statement, 8)
             rows.append((Chat(
                 id: Self.encodeOpaque(guid),
-                displayName: chatDisplayName(
+                displayName: try chatDisplayName(
                     explicit: text(statement, 1),
                     guid: guid,
                     identifier: text(statement, 6),
-                    participantCount: sqlite3_column_int64(statement, 7)),
+                    chatRowID: rowID,
+                    participantCount: sqlite3_column_int64(statement, 7),
+                    canResolveParticipants: canResolveParticipants),
                 service: text(statement, 2),
                 lastMessageAt: Self.dateString(date),
                 messageCount: sqlite3_column_int64(statement, 4)
@@ -193,16 +197,43 @@ public final class MessagesDatabase: @unchecked Sendable {
         explicit: String?,
         guid: String,
         identifier: String?,
-        participantCount: Int64
-    ) -> String {
+        chatRowID: Int64,
+        participantCount: Int64,
+        canResolveParticipants: Bool
+    ) throws -> String {
         let explicit = explicit.flatMap {
             $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
         }
-        if guid.contains(";+;") || participantCount > 1 { return explicit ?? "Group chat" }
+        if guid.contains(";+;") || participantCount > 1 {
+            if let explicit { return explicit }
+            guard canResolveParticipants else { return "Group chat" }
+            let participants = try participantNames(chatRowID: chatRowID)
+            return participants.isEmpty ? "Group chat" : participants.joined(separator: ", ")
+        }
         let handle = identifier?.trimmingCharacters(in: .whitespacesAndNewlines)
         let fallback = handle.flatMap { $0.isEmpty ? nil : $0 } ?? Self.directHandle(from: guid)
         if let fallback, let resolved = nameResolver.name(for: fallback) { return resolved }
         return explicit ?? fallback ?? "Chat"
+    }
+
+    private func participantNames(chatRowID: Int64) throws -> [String] {
+        let statement = try prepare("""
+            SELECT h.id
+            FROM chat_handle_join chj
+            JOIN handle h ON h.ROWID = chj.handle_id
+            WHERE chj.chat_id = ?
+            ORDER BY chj.ROWID
+            """)
+        defer { sqlite3_finalize(statement) }
+        bind(chatRowID, to: 1, in: statement)
+        var names: [String] = []
+        while try step(statement) {
+            guard let handle = text(statement, 0)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !handle.isEmpty else { continue }
+            let name = nameResolver.name(for: handle) ?? handle
+            if !names.contains(name) { names.append(name) }
+        }
+        return names
     }
 
     private static func directHandle(from guid: String) -> String? {
