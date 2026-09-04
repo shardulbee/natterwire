@@ -58,7 +58,7 @@ import Testing
         let third = try database.chats(limit: 1, before: secondCursor)
 
         #expect(first.items.map(\.displayName) == ["+1 (415) 555-0100"])
-        #expect(second.items.map(\.displayName) == ["Group chat"])
+        #expect(second.items.map(\.displayName) == ["group-one@example.invalid"])
         #expect(third.items.map(\.displayName) == ["Fixture Chat"])
         #expect(Set(first.items.map(\.id) + second.items.map(\.id) + third.items.map(\.id)).count == 3)
     }
@@ -85,7 +85,13 @@ import Testing
     @Test func classifiesLiveChatFormsAndResolvesDirectNames() throws {
         let fixture = try Fixture()
         let resolver = ChatNameResolver(
-            emailLookup: { $0 == "friend@example.invalid" ? "Email Friend" : nil },
+            emailLookup: {
+                [
+                    "friend@example.invalid": "Email Friend",
+                    "group-one@example.invalid": "First Participant",
+                    "group-two@example.invalid": "Second Participant",
+                ][$0]
+            },
             phoneLookup: { $0 == "+14155550100" ? "Phone Friend" : nil })
         let resolved = try MessagesDatabase(path: fixture.path, nameResolver: resolver)
             .chats(limit: 20, before: nil).items.map(\.displayName)
@@ -94,7 +100,8 @@ import Testing
         #expect(!resolved.contains("Stale Email Name"))
         #expect(resolved.contains("Phone Friend"))
         #expect(resolved.contains("missing@example.invalid"))
-        #expect(resolved.contains("Group chat"))
+        #expect(resolved.contains("First Participant"))
+        #expect(resolved.contains("First Participant, Second Participant"))
         #expect(resolved.contains("Named Group"))
         #expect(resolved.allSatisfy { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
 
@@ -103,7 +110,8 @@ import Testing
         #expect(unavailable.contains("Stale Email Name"))
         #expect(unavailable.contains("+1 (415) 555-0100"))
         #expect(unavailable.contains("denied@example.invalid"))
-        #expect(unavailable.filter { $0 == "Group chat" }.count == 2)
+        #expect(unavailable.contains("group-one@example.invalid"))
+        #expect(unavailable.contains("group-one@example.invalid, group-two@example.invalid"))
         #expect(unavailable.allSatisfy { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
     }
 
@@ -190,6 +198,8 @@ private final class Fixture {
             INSERT INTO chat VALUES (10, 'iMessage;-;multi-participant-id', '', 'iMessage', 'multi-participant-id', 43, 0, 0);
             INSERT INTO handle VALUES (1, 'fixture@example.invalid');
             INSERT INTO handle VALUES (2, 'second@example.invalid');
+            INSERT INTO handle VALUES (3, 'group-one@example.invalid');
+            INSERT INTO handle VALUES (4, 'group-two@example.invalid');
             INSERT INTO message VALUES (1, 'm1', 'first', NULL, 100, 0, 1, 'iMessage', 0, 0, 0, 0);
             INSERT INTO message VALUES (2, 'm2', 'second', NULL, 200, 1, NULL, 'iMessage', 0, 0, 0, 0);
             INSERT INTO message VALUES (4, 'reaction', 'liked', NULL, 400, 0, 1, 'iMessage', 0, 0, 2000, 0);
@@ -211,7 +221,7 @@ private final class Fixture {
             INSERT INTO message VALUES (16, 'denied-chat', 'denied', NULL, 3, 0, 1, 'iMessage', 0, 0, 0, 0);
             INSERT INTO message VALUES (17, 'multi-chat', 'multi', NULL, 2, 0, 1, 'iMessage', 0, 0, 0, 0);
             INSERT INTO chat_message_join VALUES (8, 15), (9, 16), (10, 17);
-            INSERT INTO chat_handle_join VALUES (1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1), (7, 1), (8, 1), (9, 1), (10, 1), (10, 2);
+            INSERT INTO chat_handle_join VALUES (1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1), (7, 3), (8, 3), (9, 1), (10, 3), (10, 4);
             """
         guard sqlite3_exec(db, schema, nil, nil, nil) == SQLITE_OK else { throw FixtureError.create }
         let archive = NSArchiver.archivedData(withRootObject: NSAttributedString(string: "third from archive"))
