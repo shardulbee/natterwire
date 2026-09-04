@@ -93,18 +93,11 @@ public final class HTTPServer: @unchecked Sendable {
             write(client, response: HTTPResponse(status: 400, body: Data(#"{"error":"bad request"}"#.utf8)))
             return
         }
-        var authorization: String?
-        for line in lines.dropFirst() {
-            guard let colon = line.firstIndex(of: ":") else { continue }
-            if line[..<colon].trimmingCharacters(in: .whitespaces).lowercased() == "authorization" {
-                authorization = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-            }
-        }
-        write(client, response: api.respond(method: requestLine[0], target: requestLine[1], authorization: authorization))
+        write(client, response: api.respond(method: requestLine[0], target: requestLine[1]))
     }
 
     private func write(_ client: Int32, response: HTTPResponse) {
-        let reason = [200: "OK", 400: "Bad Request", 401: "Unauthorized", 404: "Not Found", 405: "Method Not Allowed", 500: "Internal Server Error"][response.status] ?? "Error"
+        let reason = [200: "OK", 400: "Bad Request", 404: "Not Found", 405: "Method Not Allowed", 500: "Internal Server Error"][response.status] ?? "Error"
         var data = Data("HTTP/1.1 \(response.status) \(reason)\r\nContent-Type: application/json\r\nContent-Length: \(response.body.count)\r\nConnection: close\r\n\r\n".utf8)
         data.append(response.body)
         data.withUnsafeBytes { bytes in

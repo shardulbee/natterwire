@@ -26,5 +26,7 @@
     <true/>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
+    <key>NSContactsUsageDescription</key>
+    <string>Natterwire uses Contacts to show names for Messages conversations.</string>
 </dict>
 </plist>

@@ -13,7 +13,11 @@ let package = Package(
             name: "NatterwireCore",
             linkerSettings: [.linkedLibrary("sqlite3")]
         ),
-        .executableTarget(name: "Natterwire", dependencies: ["NatterwireCore"]),
+        .executableTarget(
+            name: "Natterwire",
+            dependencies: ["NatterwireCore"],
+            linkerSettings: [.linkedFramework("Contacts")]
+        ),
         .testTarget(name: "NatterwireTests", dependencies: ["NatterwireCore"]),
     ]
 )

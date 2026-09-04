@@ -43,6 +43,7 @@ final class AppState: ObservableObject {
 final class ServerRunner: @unchecked Sendable {
     private let lock = NSLock()
     private let queue = DispatchQueue(label: "com.shardul.natterwire.server", qos: .utility)
+    private let contacts = ContactsNameLookup()
     private var active = false
     private var server: HTTPServer?
 
@@ -52,17 +53,18 @@ final class ServerRunner: @unchecked Sendable {
         active = true
         lock.unlock()
         update(.starting)
+        contacts.requestAccessIfNeeded()
+        let nameResolver = contacts.resolver
 
         queue.async { [self] in
             do {
                 let environment = ProcessInfo.processInfo.environment
-                let token = try TokenConfiguration.load(environment: environment)
                 let configuredPath = environment["NATTERWIRE_DB_PATH"]
                     ?? environment["MESSAGES_DB_PATH"]
                     ?? "~/Library/Messages/chat.db"
                 let path = NSString(string: configuredPath).expandingTildeInPath
-                let database = try MessagesDatabase(path: path)
-                let api = NatterwireAPI(database: database, token: token)
+                let database = try MessagesDatabase(path: path, nameResolver: nameResolver)
+                let api = NatterwireAPI(database: database)
                 let server = HTTPServer(host: "127.0.0.1", port: 8741, api: api)
                 lock.lock(); self.server = server; lock.unlock()
                 try server.run { update(.running) }
@@ -74,8 +76,6 @@ final class ServerRunner: @unchecked Sendable {
                     update(.failed(reason: "Messages access required", messagesAccessRequired: true))
                 } else if message.contains("address already in use") {
                     update(.failed(reason: "Port 8741 is already in use", messagesAccessRequired: false))
-                } else if error is TokenConfigurationError {
-                    update(.failed(reason: "Token configuration needs attention", messagesAccessRequired: false))
                 } else {
                     update(.failed(reason: "Could not start the local API", messagesAccessRequired: false))
                 }

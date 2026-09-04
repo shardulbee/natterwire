@@ -17,7 +17,7 @@ public enum MessagesDatabaseError: Error, CustomStringConvertible {
 
 public struct Chat: Codable, Sendable {
     public let id: String
-    public let displayName: String?
+    public let displayName: String
     public let service: String?
     public let lastMessageAt: String?
     public let messageCount: Int64
@@ -64,9 +64,10 @@ public final class MessagesDatabase: @unchecked Sendable {
     private let db: OpaquePointer
     private let messageColumns: Set<String>
     private let chatColumns: Set<String>
+    private let nameResolver: ChatNameResolver
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-    public init(path: String) throws {
+    public init(path: String, nameResolver: ChatNameResolver = .unavailable) throws {
         var connection: OpaquePointer?
         let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
         guard sqlite3_open_v2(path, &connection, flags, nil) == SQLITE_OK, let connection else {
@@ -83,6 +84,7 @@ public final class MessagesDatabase: @unchecked Sendable {
         }
         messageColumns = try Self.columns(in: "message", db: db)
         chatColumns = try Self.columns(in: "chat", db: db)
+        self.nameResolver = nameResolver
     }
 
     deinit { sqlite3_close(db) }
@@ -94,8 +96,11 @@ public final class MessagesDatabase: @unchecked Sendable {
         let cursorClause = cursor == nil ? "" : "HAVING MAX(m.date) < ? OR (MAX(m.date) = ? AND c.ROWID < ?)"
         let display = chatColumns.contains("display_name") ? "c.display_name" : "NULL"
         let service = chatColumns.contains("service_name") ? "c.service_name" : "NULL"
+        let identifier = chatColumns.contains("chat_identifier") ? "c.chat_identifier" : "NULL"
+        let style = chatColumns.contains("style") ? "c.style" : "NULL"
         let sql = """
-            SELECT c.guid, \(display), \(service), MAX(m.date), COUNT(m.ROWID), c.ROWID
+            SELECT c.guid, \(display), \(service), MAX(m.date), COUNT(m.ROWID), c.ROWID,
+                   \(identifier), \(style)
             FROM chat c
             JOIN chat_message_join cmj ON cmj.chat_id = c.ROWID
             JOIN message m ON m.ROWID = cmj.message_id
@@ -122,7 +127,11 @@ public final class MessagesDatabase: @unchecked Sendable {
             let rowID = sqlite3_column_int64(statement, 5)
             rows.append((Chat(
                 id: Self.encodeOpaque(guid),
-                displayName: text(statement, 1),
+                displayName: chatDisplayName(
+                    explicit: text(statement, 1),
+                    guid: guid,
+                    identifier: text(statement, 6),
+                    style: optionalInt64(statement, 7)),
                 service: text(statement, 2),
                 lastMessageAt: Self.dateString(date),
                 messageCount: sqlite3_column_int64(statement, 4)
@@ -132,6 +141,28 @@ public final class MessagesDatabase: @unchecked Sendable {
         if hasMore { rows.removeLast() }
         let next = hasMore ? rows.last.map { Self.encodeCursor(date: $0.1, rowID: $0.2) } : nil
         return Page(items: rows.map(\.0), nextBefore: next)
+    }
+
+    private func chatDisplayName(
+        explicit: String?,
+        guid: String,
+        identifier: String?,
+        style: Int64?
+    ) -> String {
+        if let explicit, !explicit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return explicit
+        }
+        if style == 45 || guid.contains(";+;") { return "Group chat" }
+        let handle = identifier?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = handle.flatMap { $0.isEmpty ? nil : $0 } ?? Self.directHandle(from: guid)
+        guard let fallback else { return "Chat" }
+        return nameResolver.name(for: fallback) ?? fallback
+    }
+
+    private static func directHandle(from guid: String) -> String? {
+        guard let separator = guid.range(of: ";-;") else { return nil }
+        let handle = guid[separator.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+        return handle.isEmpty ? nil : handle
     }
 
     public func messages(chatID: String, limit: Int, before: String?) throws -> Page<Message> {
@@ -253,6 +284,10 @@ public final class MessagesDatabase: @unchecked Sendable {
         guard sqlite3_column_type(statement, index) == SQLITE_BLOB,
               let bytes = sqlite3_column_blob(statement, index) else { return nil }
         return Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, index)))
+    }
+
+    private func optionalInt64(_ statement: OpaquePointer, _ index: Int32) -> Int64? {
+        sqlite3_column_type(statement, index) == SQLITE_NULL ? nil : sqlite3_column_int64(statement, index)
     }
 
     private static func bounded(_ limit: Int) -> Int { min(max(limit, 1), 100) }

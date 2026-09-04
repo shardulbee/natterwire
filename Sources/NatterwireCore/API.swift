@@ -12,20 +12,15 @@ public struct HTTPResponse: Sendable {
 
 public final class NatterwireAPI: Sendable {
     private let database: MessagesDatabase
-    private let token: String
     private let encoder: JSONEncoder
 
-    public init(database: MessagesDatabase, token: String) {
+    public init(database: MessagesDatabase) {
         self.database = database
-        self.token = token
         encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
     }
 
-    public func respond(method: String, target: String, authorization: String?) -> HTTPResponse {
-        guard secureEquals(authorization ?? "", "Bearer \(token)") else {
-            return json(status: 401, ErrorBody(error: "unauthorized"))
-        }
+    public func respond(method: String, target: String) -> HTTPResponse {
         guard method == "GET" else { return json(status: 405, ErrorBody(error: "method not allowed")) }
         guard let components = URLComponents(string: target) else {
             return json(status: 400, ErrorBody(error: "invalid request target"))
@@ -66,15 +61,6 @@ public final class NatterwireAPI: Sendable {
 
     private func json<T: Encodable>(status: Int, _ value: T) -> HTTPResponse {
         HTTPResponse(status: status, body: (try? encoder.encode(value)) ?? Data(#"{"error":"encoding failed"}"#.utf8))
-    }
-
-    private func secureEquals(_ lhs: String, _ rhs: String) -> Bool {
-        let left = Array(lhs.utf8), right = Array(rhs.utf8)
-        var difference = left.count ^ right.count
-        for index in 0..<max(left.count, right.count) {
-            difference |= Int((index < left.count ? left[index] : 0) ^ (index < right.count ? right[index] : 0))
-        }
-        return difference == 0
     }
 }
 

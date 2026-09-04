@@ -8,11 +8,6 @@
     <array>
         <string>__PROGRAM__</string>
     </array>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>NATTERWIRE_API_TOKEN_FILE</key>
-        <string>__TOKEN_FILE__</string>
-    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
