@@ -1,6 +1,7 @@
 import Foundation
 import SQLite3
 import Testing
+@testable import Natterwire
 @testable import NatterwireCore
 
 @Suite struct NatterwireTests {
@@ -43,6 +44,34 @@ import Testing
         let cursor = try #require(first.nextBefore)
         let second = try database.chats(limit: 1, before: cursor)
         #expect(second.items.map(\.displayName) == ["Older Chat"])
+    }
+
+    @Test func paginatesPinsInSavedOrderThenUsesRecency() throws {
+        let fixture = try Fixture()
+        let database = try MessagesDatabase(
+            path: fixture.path,
+            pinnedChatIdentifiers: ["+1 (415) 555-0100", "group-id"])
+        let first = try database.chats(limit: 1, before: nil)
+        let firstCursor = try #require(first.nextBefore)
+        let second = try database.chats(limit: 1, before: firstCursor)
+        let secondCursor = try #require(second.nextBefore)
+        let third = try database.chats(limit: 1, before: secondCursor)
+
+        #expect(first.items.map(\.displayName) == ["+1 (415) 555-0100"])
+        #expect(second.items.map(\.displayName) == ["Group chat"])
+        #expect(third.items.map(\.displayName) == ["Fixture Chat"])
+        #expect(Set(first.items.map(\.id) + second.items.map(\.id) + third.items.map(\.id)).count == 3)
+    }
+
+    @Test func acceptsLegacyRecencyCursor() throws {
+        let fixture = try Fixture()
+        let database = try MessagesDatabase(path: fixture.path, pinnedChatIdentifiers: ["group-id"])
+        let legacy = Data("300:1".utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        let page = try database.chats(limit: 1, before: legacy)
+        #expect(page.items.map(\.displayName) == ["Older Chat"])
     }
 
     @Test func filtersReactionsActionsAndDeletedRows() throws {
@@ -101,6 +130,23 @@ import Testing
         let port = UInt16.random(in: 20_000...50_000)
         try runAndStop(HTTPServer(host: "127.0.0.1", port: port, api: api))
         try runAndStop(HTTPServer(host: "127.0.0.1", port: port, api: api))
+    }
+
+    @Test func contactsSnapshotLoadsOnlyOnceForBulkNaming() {
+        let loads = Counter()
+        let lookup = ContactsNameLookup(
+            authorizationStatus: { true },
+            snapshotLoader: {
+                loads.increment()
+                return (["friend@example.invalid": "Email Friend"], ["+14155550100": "Phone Friend"])
+            })
+        let resolver = lookup.resolver
+
+        for _ in 0..<100 {
+            #expect(resolver.name(for: "friend@example.invalid") == "Email Friend")
+            #expect(resolver.name(for: "+1 (415) 555-0100") == "Phone Friend")
+        }
+        #expect(loads.value == 1)
     }
 
     private func runAndStop(_ server: HTTPServer) throws {
@@ -193,5 +239,19 @@ private final class ServerResult: @unchecked Sendable {
 
     func set(_ error: Error) {
         lock.lock(); storedError = error; lock.unlock()
+    }
+}
+
+private final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock(); defer { lock.unlock() }
+        return count
+    }
+
+    func increment() {
+        lock.lock(); count += 1; lock.unlock()
     }
 }

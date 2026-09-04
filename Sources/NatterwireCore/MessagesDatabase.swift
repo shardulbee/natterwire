@@ -65,9 +65,14 @@ public final class MessagesDatabase: @unchecked Sendable {
     private let messageColumns: Set<String>
     private let chatColumns: Set<String>
     private let nameResolver: ChatNameResolver
+    private let pinnedChatIdentifiers: [String]
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-    public init(path: String, nameResolver: ChatNameResolver = .unavailable) throws {
+    public init(
+        path: String,
+        nameResolver: ChatNameResolver = .unavailable,
+        pinnedChatIdentifiers: [String] = []
+    ) throws {
         var connection: OpaquePointer?
         let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
         guard sqlite3_open_v2(path, &connection, flags, nil) == SQLITE_OK, let connection else {
@@ -85,48 +90,84 @@ public final class MessagesDatabase: @unchecked Sendable {
         messageColumns = try Self.columns(in: "message", db: db)
         chatColumns = try Self.columns(in: "chat", db: db)
         self.nameResolver = nameResolver
+        self.pinnedChatIdentifiers = pinnedChatIdentifiers.reduce(into: []) {
+            if !$1.isEmpty, !$0.contains($1) { $0.append($1) }
+        }
     }
 
     deinit { sqlite3_close(db) }
 
     public func chats(limit: Int, before: String?) throws -> Page<Chat> {
         let bounded = Self.bounded(limit)
-        let cursor = try before.map(Self.decodeCursor)
+        let cursor = try before.map(Self.decodeChatCursor)
         let filters = messageFilters(alias: "m") + " AND " + chatFilters(alias: "c")
-        let cursorClause = cursor == nil ? "" : "HAVING MAX(m.date) < ? OR (MAX(m.date) = ? AND c.ROWID < ?)"
+        let cursorClause: String
+        let ordering: String
+        switch cursor {
+        case .legacy?:
+            cursorClause = "HAVING MAX(m.date) < ? OR (MAX(m.date) = ? AND c.ROWID < ?)"
+            ordering = "MAX(m.date) DESC, c.ROWID DESC"
+        case .ranked?:
+            cursorClause = "HAVING pin_order > ? OR (pin_order = ? AND (MAX(m.date) < ? OR (MAX(m.date) = ? AND c.ROWID < ?)))"
+            ordering = "pin_order ASC, MAX(m.date) DESC, c.ROWID DESC"
+        case nil:
+            cursorClause = ""
+            ordering = "pin_order ASC, MAX(m.date) DESC, c.ROWID DESC"
+        }
         let display = chatColumns.contains("display_name") ? "c.display_name" : "NULL"
         let service = chatColumns.contains("service_name") ? "c.service_name" : "NULL"
         let identifier = chatColumns.contains("chat_identifier") ? "c.chat_identifier" : "NULL"
         let participantCount = Self.tableExists("chat_handle_join", db: db)
             ? "(SELECT COUNT(*) FROM chat_handle_join chj WHERE chj.chat_id = c.ROWID)"
             : "0"
+        let pinColumns = [
+            chatColumns.contains("chat_identifier") ? "c.chat_identifier" : nil,
+            chatColumns.contains("group_id") ? "c.group_id" : nil,
+        ].compactMap { $0 }
+        let pinOrder = pinColumns.isEmpty ? "" : pinnedChatIdentifiers.enumerated().map { offset, _ in
+            "WHEN " + pinColumns.map { "\($0) = ?" }.joined(separator: " OR ") + " THEN \(offset)"
+        }.joined(separator: " ")
+        let pinExpression = pinOrder.isEmpty ? "0" : "CASE \(pinOrder) ELSE \(pinnedChatIdentifiers.count) END"
         let sql = """
             SELECT c.guid, \(display), \(service), MAX(m.date), COUNT(m.ROWID), c.ROWID,
-                   \(identifier), \(participantCount)
+                   \(identifier), \(participantCount), \(pinExpression) AS pin_order
             FROM chat c
             JOIN chat_message_join cmj ON cmj.chat_id = c.ROWID
             JOIN message m ON m.ROWID = cmj.message_id
             WHERE c.guid IS NOT NULL AND \(filters)
             GROUP BY c.ROWID
             \(cursorClause)
-            ORDER BY MAX(m.date) DESC, c.ROWID DESC
+            ORDER BY \(ordering)
             LIMIT ?
             """
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
         var index: Int32 = 1
+        for pin in pinnedChatIdentifiers {
+            for _ in pinColumns { bind(pin, to: index, in: statement); index += 1 }
+        }
         if let cursor {
-            bind(cursor.date, to: index, in: statement); index += 1
-            bind(cursor.date, to: index, in: statement); index += 1
-            bind(cursor.rowID, to: index, in: statement); index += 1
+            switch cursor {
+            case .legacy(let date, let rowID):
+                bind(date, to: index, in: statement); index += 1
+                bind(date, to: index, in: statement); index += 1
+                bind(rowID, to: index, in: statement); index += 1
+            case .ranked(let pinOrder, let date, let rowID):
+                bind(pinOrder, to: index, in: statement); index += 1
+                bind(pinOrder, to: index, in: statement); index += 1
+                bind(date, to: index, in: statement); index += 1
+                bind(date, to: index, in: statement); index += 1
+                bind(rowID, to: index, in: statement); index += 1
+            }
         }
         bind(Int64(bounded + 1), to: index, in: statement)
 
-        var rows: [(Chat, Int64, Int64)] = []
+        var rows: [(Chat, Int64, Int64, Int64)] = []
         while try step(statement) {
             guard let guid = text(statement, 0) else { continue }
             let date = sqlite3_column_int64(statement, 3)
             let rowID = sqlite3_column_int64(statement, 5)
+            let pinOrder = sqlite3_column_int64(statement, 8)
             rows.append((Chat(
                 id: Self.encodeOpaque(guid),
                 displayName: chatDisplayName(
@@ -137,11 +178,14 @@ public final class MessagesDatabase: @unchecked Sendable {
                 service: text(statement, 2),
                 lastMessageAt: Self.dateString(date),
                 messageCount: sqlite3_column_int64(statement, 4)
-            ), date, rowID))
+            ), date, rowID, pinOrder))
         }
         let hasMore = rows.count > bounded
         if hasMore { rows.removeLast() }
-        let next = hasMore ? rows.last.map { Self.encodeCursor(date: $0.1, rowID: $0.2) } : nil
+        let next = hasMore ? rows.last.map {
+            if case .legacy? = cursor { return Self.encodeLegacyCursor(date: $0.1, rowID: $0.2) }
+            return Self.encodeCursor(pinOrder: $0.3, date: $0.1, rowID: $0.2)
+        } : nil
         return Page(items: rows.map(\.0), nextBefore: next)
     }
 
@@ -170,7 +214,7 @@ public final class MessagesDatabase: @unchecked Sendable {
     public func messages(chatID: String, limit: Int, before: String?) throws -> Page<Message> {
         guard let guid = Self.decodeOpaque(chatID) else { throw MessagesDatabaseError.invalidIdentifier }
         let bounded = Self.bounded(limit)
-        let cursor = try before.map(Self.decodeCursor)
+        let cursor = try before.map(Self.decodeLegacyCursor)
         let cursorClause = cursor == nil ? "" : "AND (m.date < ? OR (m.date = ? AND m.ROWID < ?))"
         let body = messageColumns.contains("attributedBody") ? "m.attributedBody" : "NULL"
         let sender = messageColumns.contains("handle_id") ? "h.id" : "NULL"
@@ -215,7 +259,7 @@ public final class MessagesDatabase: @unchecked Sendable {
         }
         let hasMore = rows.count > bounded
         if hasMore { rows.removeLast() }
-        let next = hasMore ? rows.last.map { Self.encodeCursor(date: $0.1, rowID: $0.2) } : nil
+        let next = hasMore ? rows.last.map { Self.encodeLegacyCursor(date: $0.1, rowID: $0.2) } : nil
         return Page(items: rows.map(\.0), nextBefore: next)
     }
 
@@ -318,11 +362,33 @@ public final class MessagesDatabase: @unchecked Sendable {
         Data(base64URLEncoded: value).flatMap { String(data: $0, encoding: .utf8) }
     }
 
-    private static func encodeCursor(date: Int64, rowID: Int64) -> String {
+    private enum Cursor {
+        case legacy(date: Int64, rowID: Int64)
+        case ranked(pinOrder: Int64, date: Int64, rowID: Int64)
+    }
+
+    private static func encodeCursor(pinOrder: Int64, date: Int64, rowID: Int64) -> String {
+        encodeOpaque("v2:\(pinOrder):\(date):\(rowID)")
+    }
+
+    private static func encodeLegacyCursor(date: Int64, rowID: Int64) -> String {
         encodeOpaque("\(date):\(rowID)")
     }
 
-    private static func decodeCursor(_ value: String) throws -> (date: Int64, rowID: Int64) {
+    private static func decodeChatCursor(_ value: String) throws -> Cursor {
+        guard let decoded = decodeOpaque(value) else { throw MessagesDatabaseError.invalidCursor }
+        let parts = decoded.split(separator: ":", omittingEmptySubsequences: false)
+        if parts.count == 2, let date = Int64(parts[0]), let rowID = Int64(parts[1]) {
+            return .legacy(date: date, rowID: rowID)
+        }
+        if parts.count == 4, parts[0] == "v2", let pinOrder = Int64(parts[1]),
+           let date = Int64(parts[2]), let rowID = Int64(parts[3]) {
+            return .ranked(pinOrder: pinOrder, date: date, rowID: rowID)
+        }
+        throw MessagesDatabaseError.invalidCursor
+    }
+
+    private static func decodeLegacyCursor(_ value: String) throws -> (date: Int64, rowID: Int64) {
         guard let decoded = decodeOpaque(value) else { throw MessagesDatabaseError.invalidCursor }
         let parts = decoded.split(separator: ":", omittingEmptySubsequences: false)
         guard parts.count == 2, let date = Int64(parts[0]), let rowID = Int64(parts[1]) else {

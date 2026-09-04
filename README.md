@@ -29,7 +29,7 @@ GET /chats/:identifier/messages
 GET /messages/:identifier
 ```
 
-Lists return `{ "items": [...], "nextBefore": "..." }`; `limit` defaults to 50 when absent and accepts integers from 1 through 100, while `before` accepts the prior cursor. Chat identifiers are URL-safe opaque encodings of Messages chat GUIDs. Natterwire uses Contacts names for direct chats when permission is available, otherwise it returns the raw handle; unnamed groups return `Group chat`. Valid message rows whose body cannot be decoded return `text: ""` so pagination remains stable.
+Lists return `{ "items": [...], "nextBefore": "..." }`; `limit` defaults to 50 when absent and accepts integers from 1 through 100, while `before` accepts the prior cursor. Chats follow Messages ordering: saved pins first in pin order, then unpinned chats by newest activity. Chat identifiers are URL-safe opaque encodings of Messages chat GUIDs. Natterwire uses Contacts names for direct chats when permission is available, otherwise it returns the raw handle; unnamed groups return `Group chat`. Valid message rows whose body cannot be decoded return `text: ""` so pagination remains stable.
 
 ```sh
 curl 'http://127.0.0.1:8741/chats?limit=20'

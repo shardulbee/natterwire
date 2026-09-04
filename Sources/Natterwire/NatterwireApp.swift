@@ -63,7 +63,10 @@ final class ServerRunner: @unchecked Sendable {
                     ?? environment["MESSAGES_DB_PATH"]
                     ?? "~/Library/Messages/chat.db"
                 let path = NSString(string: configuredPath).expandingTildeInPath
-                let database = try MessagesDatabase(path: path, nameResolver: nameResolver)
+                let database = try MessagesDatabase(
+                    path: path,
+                    nameResolver: nameResolver,
+                    pinnedChatIdentifiers: Self.pinnedChatIdentifiers())
                 let api = NatterwireAPI(database: database)
                 let server = HTTPServer(host: "127.0.0.1", port: 8741, api: api)
                 lock.lock(); self.server = server; lock.unlock()
@@ -96,6 +99,17 @@ final class ServerRunner: @unchecked Sendable {
         server = nil
         active = false
         lock.unlock()
+    }
+
+    private static func pinnedChatIdentifiers() -> [String] {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences/com.apple.messages.pinning.plist")
+        guard let data = try? Data(contentsOf: url),
+              let root = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+                as? [String: Any],
+              let pinning = root["pD"] as? [String: Any],
+              let identifiers = pinning["pP"] as? [String] else { return [] }
+        return identifiers
     }
 }
 

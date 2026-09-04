@@ -18,6 +18,6 @@ let package = Package(
             dependencies: ["NatterwireCore"],
             linkerSettings: [.linkedFramework("Contacts")]
         ),
-        .testTarget(name: "NatterwireTests", dependencies: ["NatterwireCore"]),
+        .testTarget(name: "NatterwireTests", dependencies: ["NatterwireCore", "Natterwire"]),
     ]
 )
