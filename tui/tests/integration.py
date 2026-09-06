@@ -52,6 +52,13 @@ def run(api, tui, captures):
                 assert base64.b64decode(attachment["dataBase64"]) == (root / "api/testdata/orientation-6.heic").read_bytes()
                 display = Image.open(io.BytesIO(base64.b64decode(attachment["displayDataBase64"])))
                 assert display.format == "JPEG" and display.size == (1536, 2048)
+                with urllib.request.urlopen(url + "/messages/" + page["items"][0]["id"] + "?limit=1&media=metadata") as response:
+                    metadata = json.load(response)["items"][0]["attachments"][0]
+                assert "dataBase64" not in metadata and "displayDataBase64" not in metadata
+                assert (metadata["width"], metadata["height"]) == display.size
+                with urllib.request.urlopen(url + "/attachments/" + metadata["mediaID"] + "?version=" + metadata["version"]) as response:
+                    assert response.headers["Content-Type"] == "image/jpeg"
+                    assert response.read() == base64.b64decode(attachment["displayDataBase64"])
                 if captures:
                     captures.mkdir(parents=True, exist_ok=True)
                     display.save(captures / "heic-display.png")
