@@ -18,6 +18,7 @@
     [NSApp activateIgnoringOtherApps:YES];
 }
 - (void)openWindow:(id)sender { [self showWindow]; }
+- (void)quitFromStatusMenu:(id)sender { [NSApp terminate:sender]; }
 - (void)applicationDidFinishLaunching:(NSNotification *)note { [self showWindow]; }
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)app { return NO; }
 - (void)refreshContactsStatus {
@@ -105,7 +106,8 @@ int nw_app_prepare(void) {
         NSMenu *statusMenu = [[NSMenu alloc] initWithTitle:@"Natterwire"];
         [statusMenu addItemWithTitle:@"Open Natterwire" action:@selector(openWindow:) keyEquivalent:@""].target = delegate;
         [statusMenu addItem:[NSMenuItem separatorItem]];
-        [statusMenu addItemWithTitle:@"Quit Natterwire" action:@selector(terminate:) keyEquivalent:@"q"].target = NSApp;
+        // AppKit adds a Quit icon to terminate:; keep only this menu item text-only.
+        [statusMenu addItemWithTitle:@"Quit Natterwire" action:@selector(quitFromStatusMenu:) keyEquivalent:@"q"].target = delegate;
         delegate.statusItem.menu = statusMenu;
         NSMenu *menu = [NSMenu new];
         NSMenuItem *item = [NSMenuItem new];
