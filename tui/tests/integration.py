@@ -1,5 +1,7 @@
 """Run both Go binaries against synthetic SQLite, with no demo or mock HTTP API."""
 import argparse
+import base64
+import io
 import json
 import os
 from pathlib import Path
@@ -11,6 +13,7 @@ import time
 import urllib.request
 
 from smoke import Terminal
+from PIL import Image
 
 
 def run(api, tui, captures):
@@ -19,6 +22,8 @@ def run(api, tui, captures):
         path = Path(tmp) / "chat.db"
         with sqlite3.connect(path) as db:
             db.executescript((root / "api/testdata/messages.sql").read_text())
+            db.execute("UPDATE attachment SET filename=?,transfer_name='fixture.heic',mime_type='image/heic'",
+                       (str(root / "api/testdata/orientation-6.heic"),))
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
@@ -42,9 +47,17 @@ def run(api, tui, captures):
                 else:
                     raise AssertionError("API did not start")
                 assert page["items"][0]["displayName"] == "Alex Chen"
+                with urllib.request.urlopen(url + "/messages/" + page["items"][0]["id"] + "?limit=1") as response:
+                    attachment = json.load(response)["items"][0]["attachments"][0]
+                assert base64.b64decode(attachment["dataBase64"]) == (root / "api/testdata/orientation-6.heic").read_bytes()
+                display = Image.open(io.BytesIO(base64.b64decode(attachment["displayDataBase64"])))
+                assert display.format == "JPEG" and display.size == (1536, 2048)
+                if captures:
+                    captures.mkdir(parents=True, exist_ok=True)
+                    display.save(captures / "heic-display.png")
                 terminal = Terminal(tui, ["--url", url])
                 terminal.expect("Archived message")
-                terminal.expect("fixture.png")
+                terminal.expect("fixture.heic")
                 terminal.expect("Alex Chen")
                 terminal.capture(captures, "go-api-transcript")
                 terminal.send("J")
@@ -76,7 +89,7 @@ def run(api, tui, captures):
             with socket.socket() as sock:
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 sock.bind(("127.0.0.1", port))
-    print("PASS: real Go API + TUI, archived text, names, attachments, chat switch, draft, WAL refresh, shutdown")
+    print("PASS: real Go API + TUI, archived text, names, HEIC display JPEG, chat switch, draft, WAL refresh, shutdown")
 
 
 if __name__ == "__main__":

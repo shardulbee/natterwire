@@ -73,6 +73,7 @@ Pins load once from `~/Library/Preferences/com.apple.messages.pinning.plist`, us
 - Contact names override direct-chat labels. Named groups retain their label; unnamed groups join deduplicated participant names or handles in database order. Empty groups return `Group chat`.
 - Plain `text`, including an empty string, takes precedence over `attributedBody`. The Go decoder reads typedstream v4 NSString and mutable/immutable NSAttributedString backing text, with class references, both endiannesses, and 1/2/4-byte lengths. It does not decode formatting attributes or keyed archives. Unsupported or malformed bodies retain their row with `text: ""`, as before. This is a prefix decoder, not a validator for the trailing attribute graph. Synthetic tests are not proof of coverage for every Apple archive variant; live macOS comparison remains necessary.
 - Attachments retain IDs, optional filenames/MIME types, and base64 original bytes up to 10 MiB. Unavailable or oversized files omit `dataBase64`; local paths are not exposed. Text-only messages return `attachments: []`.
+- HEIC display JPEGs use `displayDataBase64`, preserving full resolution and HEIF rotation/mirroring. The embedded WASM decoder runs on Linux and macOS without a native library. Images over 32 megapixels or unsupported images omit the display copy. EXIF-only orientation without HEIF transform properties is not applied; live Apple image parity remains unverified.
 
 ## Tests
 
