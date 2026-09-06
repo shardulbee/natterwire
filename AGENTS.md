@@ -4,4 +4,4 @@ Use a live Mac runner for `swift test`. Create a runner thread and transfer a so
 
 # Shipping
 
-Follow [.agents/ship.md](.agents/ship.md), including deploying the TUI binary on the Mac.
+Follow [.agents/ship.md](.agents/ship.md), including deploying changed TUI and API components on the Mac.
