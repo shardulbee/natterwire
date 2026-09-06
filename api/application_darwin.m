@@ -20,12 +20,12 @@
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)app { return NO; }
 - (void)refreshContactsStatus {
     if (![[NSBundle mainBundle] objectForInfoDictionaryKey:@"NSContactsUsageDescription"]) {
-        self.contactsAccess.stringValue = @"○ Contacts: unavailable";
+        self.contactsAccess.stringValue = @"○ Contacts access unavailable";
         return;
     }
     CNAuthorizationStatus status = [CNContactStore authorizationStatusForEntityType:CNEntityTypeContacts];
     BOOL allowed = status != CNAuthorizationStatusNotDetermined && status != CNAuthorizationStatusDenied && status != CNAuthorizationStatusRestricted;
-    self.contactsAccess.stringValue = allowed ? @"✓ Contacts: approved" : @"○ Contacts: not approved (optional)";
+    self.contactsAccess.stringValue = allowed ? @"✓ Contacts access available" : @"○ Contacts access unavailable";
     self.contactsAccess.textColor = allowed ? [NSColor systemGreenColor] : [NSColor secondaryLabelColor];
 }
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)app hasVisibleWindows:(BOOL)visible {
@@ -48,6 +48,23 @@
 
 static NatterwireDelegate *delegate;
 
+static NSTextField *permissionRow(NSView *content, NSString *title, CGFloat y, SEL action) {
+    NSTextField *label = [NSTextField labelWithString:title];
+    label.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
+    label.frame = NSMakeRect(40,y+36,280,20);
+    [content addSubview:label];
+    NSTextField *status = [NSTextField labelWithString:@"○ Checking access…"];
+    status.font = [NSFont systemFontOfSize:12];
+    status.textColor = [NSColor secondaryLabelColor];
+    status.frame = NSMakeRect(40,y+13,280,20);
+    [content addSubview:status];
+    NSButton *settings = [NSButton buttonWithTitle:@"Settings…" target:delegate action:action];
+    settings.accessibilityLabel = [title stringByAppendingString:@" settings"];
+    settings.frame = NSMakeRect(336,y+20,104,28);
+    [content addSubview:settings];
+    return status;
+}
+
 int nw_app_prepare(void) {
     @autoreleasepool {
         if (![[[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundlePackageType"] isEqual:@"APPL"]) return 0;
@@ -63,43 +80,34 @@ int nw_app_prepare(void) {
         item.submenu = appMenu;
         NSApp.mainMenu = menu;
 
-        delegate.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,360)
+        delegate.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,350)
             styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
             backing:NSBackingStoreBuffered defer:NO];
         delegate.window.title = @"Natterwire";
         delegate.window.releasedWhenClosed = NO;
         [delegate.window center];
         NSView *content = delegate.window.contentView;
-        NSImageView *icon = [[NSImageView alloc] initWithFrame:NSMakeRect(24,268,64,64)];
+        NSImageView *icon = [[NSImageView alloc] initWithFrame:NSMakeRect(24,270,48,48)];
         icon.image = [NSApp applicationIconImage];
         [content addSubview:icon];
         delegate.status = [NSTextField labelWithString:@"Starting Natterwire"];
         delegate.status.font = [NSFont boldSystemFontOfSize:20];
-        delegate.status.frame = NSMakeRect(104,288,350,28);
+        delegate.status.frame = NSMakeRect(88,294,368,26);
         [content addSubview:delegate.status];
-        delegate.detail = [NSTextField wrappingLabelWithString:@"Checking Messages access and requesting Contacts permission."];
-        delegate.detail.frame = NSMakeRect(24,196,432,60);
+        delegate.detail = [NSTextField wrappingLabelWithString:@"Checking access. Contacts access is optional."];
+        delegate.detail.textColor = [NSColor secondaryLabelColor];
+        delegate.detail.frame = NSMakeRect(88,244,368,42);
         [content addSubview:delegate.detail];
-        delegate.messagesAccess = [NSTextField labelWithString:@"○ Full Disk Access: checking Messages…"];
-        delegate.messagesAccess.frame = NSMakeRect(24,157,432,24);
-        [content addSubview:delegate.messagesAccess];
-        delegate.contactsAccess = [NSTextField labelWithString:@"○ Contacts: checking…"];
-        delegate.contactsAccess.frame = NSMakeRect(24,125,432,24);
-        [content addSubview:delegate.contactsAccess];
+        delegate.messagesAccess = permissionRow(content, @"Full Disk Access", 155, @selector(openPrivacy:));
+        delegate.contactsAccess = permissionRow(content, @"Contacts", 79, @selector(openContacts:));
         [delegate refreshContactsStatus];
         [NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer) {
             [delegate refreshContactsStatus];
         }];
-        NSButton *privacy = [NSButton buttonWithTitle:@"Open Full Disk Access" target:delegate action:@selector(openPrivacy:)];
-        privacy.frame = NSMakeRect(20,65,215,32);
-        [content addSubview:privacy];
-        NSButton *contacts = [NSButton buttonWithTitle:@"Contacts Settings" target:delegate action:@selector(openContacts:)];
-        contacts.frame = NSMakeRect(250,65,205,32);
-        [content addSubview:contacts];
-        NSTextField *note = [NSTextField labelWithString:@"Contacts names are optional. You can keep using raw handles."];
+        NSTextField *note = [NSTextField wrappingLabelWithString:@"Closing this window leaves the API running.\nQuit Natterwire (⌘Q) to stop it."];
         note.font = [NSFont systemFontOfSize:11];
         note.textColor = [NSColor secondaryLabelColor];
-        note.frame = NSMakeRect(24,24,432,20);
+        note.frame = NSMakeRect(24,20,432,36);
         [content addSubview:note];
         return 1;
     }
@@ -114,7 +122,7 @@ void nw_app_update(const char *title, const char *detail, int messagesAvailable)
         dispatch_async(dispatch_get_main_queue(), ^{
             delegate.status.stringValue = t;
             delegate.detail.stringValue = d;
-            delegate.messagesAccess.stringValue = messagesAvailable ? @"✓ Full Disk Access: Messages readable" : @"○ Full Disk Access: Messages unavailable";
+            delegate.messagesAccess.stringValue = messagesAvailable ? @"✓ Messages access available" : @"○ Messages access unavailable";
             delegate.messagesAccess.textColor = messagesAvailable ? [NSColor systemGreenColor] : [NSColor secondaryLabelColor];
         });
     }
