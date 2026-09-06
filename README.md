@@ -33,6 +33,8 @@ GET /messages/:identifier
 
 Lists return `{ "items": [...], "nextBefore": "..." }`; `limit` defaults to 50 when absent and accepts integers from 1 through 100, while `before` accepts the prior cursor. Chats follow Messages ordering: saved pins first in pin order, then unpinned chats by newest activity. Chat identifiers are URL-safe opaque encodings of Messages chat GUIDs. Natterwire uses Contacts names for direct chats and unnamed group participants when permission is available, otherwise it returns their raw handles. An unnamed group with no participants returns `Group chat`. Valid message rows whose body cannot be decoded return `text: ""` so pagination remains stable.
 
+Messages include `attachments: [{ id, filename, mimeType, dataBase64 }]`, or `[]` for text-only messages. `dataBase64` contains the original file bytes as standard base64, omitted when the file is unavailable or larger than 10 MiB. Optional metadata is omitted when unknown; local paths are not returned. Attachment-only messages are included even without a text body. Base64 adds roughly 33% to file size, so use smaller pages for media-heavy chats.
+
 ```sh
 curl 'http://127.0.0.1:8741/chats?limit=20'
 ```

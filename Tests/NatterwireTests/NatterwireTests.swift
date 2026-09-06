@@ -5,6 +5,46 @@ import Testing
 @testable import NatterwireCore
 
 @Suite struct NatterwireTests {
+    @Test func sendsAttachmentsAsBase64AndKeepsAttachmentOnlyMessages() throws {
+        let directory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("natterwire-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let image = Data([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff])
+        try image.write(to: directory.appendingPathComponent("image.png"))
+        try Data(repeating: 1, count: 10 * 1024 * 1024 + 1)
+            .write(to: directory.appendingPathComponent("large.png"))
+        let fixture = try Fixture(attachmentPaths: [
+            "~/\(directory.lastPathComponent)/image.png",
+            directory.appendingPathComponent("missing.png").path,
+            directory.appendingPathComponent("large.png").path,
+            nil,
+        ])
+        let database = try MessagesDatabase(path: fixture.path)
+        let chat = try #require(database.chats(limit: 1, before: nil).items.first)
+        #expect(chat.messageCount == 2)
+        let api = NatterwireAPI(database: database)
+        for route in ["/chats/\(chat.id)/messages", "/messages/\(chat.id)"] {
+            let response = api.respond(method: "GET", target: route + "?limit=1")
+            #expect(response.status == 200)
+            let page = try JSONDecoder().decode(Page<Message>.self, from: response.body)
+            let message = try #require(page.items.first)
+            #expect(message.text == "\u{fffc}")
+            #expect(message.attachments.map(\.id) == ["a1", "a2", "a3", "a4"])
+            #expect(message.attachments[0].filename == "image.png")
+            #expect(message.attachments[0].mimeType == "image/png")
+            let base64 = try #require(message.attachments[0].dataBase64)
+            #expect(Data(base64Encoded: base64) == image)
+            #expect(message.attachments.dropFirst().allSatisfy { $0.dataBase64 == nil })
+            #expect(!String(decoding: response.body, as: UTF8.self).contains(directory.path))
+            let cursor = try #require(page.nextBefore)
+            let next = try database.messages(chatID: chat.id, limit: 1, before: cursor)
+            #expect(next.items.map(\.text) == [""])
+            #expect(next.items.first?.attachments.count == 1)
+            #expect(next.nextBefore == nil)
+        }
+    }
+
     @Test func listsChatsAndPaginatesDecodedMessages() throws {
         let fixture = try Fixture()
         let database = try MessagesDatabase(path: fixture.path)
@@ -15,6 +55,7 @@ import Testing
 
         let first = try database.messages(chatID: chats.items[0].id, limit: 1, before: nil)
         #expect(first.items.map(\.text) == ["third from archive"])
+        #expect(first.items[0].attachments.isEmpty)
         #expect(first.nextBefore != nil)
         let second = try database.messages(chatID: chats.items[0].id, limit: 10, before: first.nextBefore)
         #expect(second.items.map(\.text) == ["second", "first"])
@@ -195,7 +236,7 @@ import Testing
 private final class Fixture {
     let path: String
 
-    init() throws {
+    init(attachmentPaths: [String?] = []) throws {
         path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".db").path
         var db: OpaquePointer?
         guard sqlite3_open(path, &db) == SQLITE_OK, let db else { throw FixtureError.create }
@@ -252,6 +293,30 @@ private final class Fixture {
         guard sqlite3_step(statement) == SQLITE_DONE else { throw FixtureError.create }
         sqlite3_finalize(statement)
         guard sqlite3_exec(db, "INSERT INTO chat_message_join VALUES (1, 3)", nil, nil, nil) == SQLITE_OK else { throw FixtureError.create }
+        if !attachmentPaths.isEmpty {
+            let attachments = """
+                CREATE TABLE attachment (ROWID INTEGER PRIMARY KEY, guid TEXT, filename TEXT, transfer_name TEXT, mime_type TEXT);
+                CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
+                INSERT INTO chat VALUES (11, 'iMessage;-;images', 'Images', 'iMessage', 'images', 43, 0, 0);
+                INSERT INTO message VALUES (18, 'image', '\u{fffc}', NULL, 700, 0, 1, 'iMessage', 0, 0, 0, 0);
+                INSERT INTO message VALUES (19, 'image-only', NULL, NULL, 650, 0, 1, 'iMessage', 0, 0, 0, 0);
+                INSERT INTO chat_message_join VALUES (11, 18), (11, 19);
+                INSERT INTO message_attachment_join VALUES (19, 1);
+                """
+            guard sqlite3_exec(db, attachments, nil, nil, nil) == SQLITE_OK else { throw FixtureError.create }
+            for (index, path) in attachmentPaths.enumerated() {
+                var attachment: OpaquePointer?
+                sqlite3_prepare_v2(db, "INSERT INTO attachment VALUES (?, ?, ?, NULL, 'image/png')", -1, &attachment, nil)
+                defer { sqlite3_finalize(attachment) }
+                let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+                sqlite3_bind_int64(attachment, 1, Int64(index + 1))
+                sqlite3_bind_text(attachment, 2, "a\(index + 1)", -1, transient)
+                if let path { sqlite3_bind_text(attachment, 3, path, -1, transient) }
+                guard sqlite3_step(attachment) == SQLITE_DONE,
+                      sqlite3_exec(db, "INSERT INTO message_attachment_join VALUES (18, \(index + 1))", nil, nil, nil) == SQLITE_OK
+                else { throw FixtureError.create }
+            }
+        }
     }
 
     deinit { try? FileManager.default.removeItem(atPath: path) }

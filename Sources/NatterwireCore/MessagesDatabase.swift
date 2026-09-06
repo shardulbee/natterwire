@@ -30,6 +30,15 @@ public struct Message: Codable, Sendable {
     public let isFromMe: Bool
     public let sender: String?
     public let service: String?
+    public let attachments: [Attachment]
+}
+
+public struct Attachment: Codable, Sendable {
+    public let id: String
+    public let filename: String?
+    public let mimeType: String?
+    // Omitted when the file is unavailable or exceeds the inline limit.
+    public let dataBase64: String?
 }
 
 public struct Page<Element: Codable & Sendable>: Codable, Sendable {
@@ -64,6 +73,7 @@ public final class MessagesDatabase: @unchecked Sendable {
     private let db: OpaquePointer
     private let messageColumns: Set<String>
     private let chatColumns: Set<String>
+    private let hasAttachments: Bool
     private let nameResolver: ChatNameResolver
     private let pinnedChatIdentifiers: [String]
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
@@ -89,6 +99,8 @@ public final class MessagesDatabase: @unchecked Sendable {
         }
         messageColumns = try Self.columns(in: "message", db: db)
         chatColumns = try Self.columns(in: "chat", db: db)
+        hasAttachments = Self.tableExists("attachment", db: db)
+            && Self.tableExists("message_attachment_join", db: db)
         self.nameResolver = nameResolver
         self.pinnedChatIdentifiers = pinnedChatIdentifiers.reduce(into: []) {
             if !$1.isEmpty, !$0.contains($1) { $0.append($1) }
@@ -285,7 +297,8 @@ public final class MessagesDatabase: @unchecked Sendable {
                 sentAt: Self.dateString(date),
                 isFromMe: sqlite3_column_int(statement, 4) != 0,
                 sender: text(statement, 5).map { nameResolver.name(for: $0) ?? $0 },
-                service: text(statement, 6)
+                service: text(statement, 6),
+                attachments: rows.count < bounded ? try attachments(messageRowID: rowID) : []
             ), date, rowID))
         }
         let hasMore = rows.count > bounded
@@ -294,13 +307,47 @@ public final class MessagesDatabase: @unchecked Sendable {
         return Page(items: rows.map(\.0), nextBefore: next)
     }
 
+    private func attachments(messageRowID: Int64) throws -> [Attachment] {
+        guard hasAttachments else { return [] }
+        let statement = try prepare("""
+            SELECT a.guid, a.filename, a.transfer_name, a.mime_type, a.ROWID
+            FROM message_attachment_join maj
+            JOIN attachment a ON a.ROWID = maj.attachment_id
+            WHERE maj.message_id = ?
+            ORDER BY a.ROWID
+            """)
+        defer { sqlite3_finalize(statement) }
+        bind(messageRowID, to: 1, in: statement)
+        var attachments: [Attachment] = []
+        while try step(statement) {
+            let path = text(statement, 1).map { ($0 as NSString).expandingTildeInPath }
+            var data: Data?
+            // Read at most one byte beyond the limit, including when file size metadata is stale.
+            let limit = 10 * 1024 * 1024
+            if let path, let file = FileHandle(forReadingAtPath: path) {
+                defer { try? file.close() }
+                if let bytes = try? file.read(upToCount: limit + 1), bytes.count <= limit {
+                    data = bytes
+                }
+            }
+            attachments.append(Attachment(
+                id: text(statement, 0) ?? String(sqlite3_column_int64(statement, 4)),
+                filename: text(statement, 2) ?? path.map { ($0 as NSString).lastPathComponent },
+                mimeType: text(statement, 3),
+                dataBase64: data?.base64EncodedString()
+            ))
+        }
+        return attachments
+    }
+
     private func messageFilters(alias: String) -> String {
         var filters = ["\(alias).date IS NOT NULL"]
-        if messageColumns.contains("attributedBody") {
-            filters.append("(\(alias).text IS NOT NULL OR \(alias).attributedBody IS NOT NULL)")
-        } else {
-            filters.append("\(alias).text IS NOT NULL")
+        var bodies = ["\(alias).text IS NOT NULL"]
+        if messageColumns.contains("attributedBody") { bodies.append("\(alias).attributedBody IS NOT NULL") }
+        if hasAttachments {
+            bodies.append("EXISTS (SELECT 1 FROM message_attachment_join maj WHERE maj.message_id = \(alias).ROWID)")
         }
+        filters.append("(" + bodies.joined(separator: " OR ") + ")")
         if messageColumns.contains("item_type") { filters.append("COALESCE(\(alias).item_type, 0) = 0") }
         if messageColumns.contains("group_action_type") { filters.append("COALESCE(\(alias).group_action_type, 0) = 0") }
         if messageColumns.contains("associated_message_type") { filters.append("COALESCE(\(alias).associated_message_type, 0) = 0") }
