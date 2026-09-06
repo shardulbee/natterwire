@@ -38,10 +38,18 @@ public struct Attachment: Codable, Sendable {
     public let id: String
     public let filename: String?
     public let mimeType: String?
+    public var mediaID: String? = nil
+    public var version: String? = nil
+    public var width: Int? = nil
+    public var height: Int? = nil
+    var path: String? = nil
+    private enum CodingKeys: String, CodingKey {
+        case id, filename, mimeType, mediaID, version, width, height, dataBase64, displayDataBase64
+    }
     // Omitted when the file is unavailable or exceeds the inline limit.
-    public let dataBase64: String?
+    public var dataBase64: String?
     // Full-resolution, orientation-correct JPEG for clients without HEIC support.
-    public let displayDataBase64: String?
+    public var displayDataBase64: String?
 
     static func displayData(_ data: Data) -> Data? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
@@ -97,6 +105,8 @@ public struct Page<Element: Codable & Sendable>: Codable, Sendable {
 
 public final class MessagesDatabase: @unchecked Sendable {
     private let db: OpaquePointer
+    private let databaseLock = NSLock()
+    let media = AttachmentMedia()
     private let messageColumns: Set<String>
     private let chatColumns: Set<String>
     private let hasAttachments: Bool
@@ -136,6 +146,8 @@ public final class MessagesDatabase: @unchecked Sendable {
     deinit { sqlite3_close(db) }
 
     public func chats(limit: Int, before: String?) throws -> Page<Chat> {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         let bounded = Self.bounded(limit)
         let cursor = try before.map(Self.decodeChatCursor)
         let filters = messageFilters(alias: "m") + " AND " + chatFilters(alias: "c")
@@ -280,7 +292,19 @@ public final class MessagesDatabase: @unchecked Sendable {
         return handle.isEmpty ? nil : handle
     }
 
-    public func messages(chatID: String, limit: Int, before: String?) throws -> Page<Message> {
+    public func messages(chatID: String, limit: Int, before: String?, metadataOnly: Bool = false) throws -> Page<Message> {
+        let page = try messageRows(chatID: chatID, limit: limit, before: before)
+        // All statements are finalized and the connection lock released before file IO.
+        return Page(items: page.items.map { message in
+            Message(id: message.id, text: message.text, sentAt: message.sentAt,
+                    isFromMe: message.isFromMe, sender: message.sender, service: message.service,
+                    attachments: message.attachments.map { media.populate($0, metadataOnly: metadataOnly) })
+        }, nextBefore: page.nextBefore)
+    }
+
+    private func messageRows(chatID: String, limit: Int, before: String?) throws -> Page<Message> {
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
         guard let guid = Self.decodeOpaque(chatID) else { throw MessagesDatabaseError.invalidIdentifier }
         let bounded = Self.bounded(limit)
         let cursor = try before.map(Self.decodeLegacyCursor)
@@ -347,24 +371,31 @@ public final class MessagesDatabase: @unchecked Sendable {
         var attachments: [Attachment] = []
         while try step(statement) {
             let path = text(statement, 1).map { ($0 as NSString).expandingTildeInPath }
-            var data: Data?
-            // Read at most one byte beyond the limit, including when file size metadata is stale.
-            let limit = 10 * 1024 * 1024
-            if let path, let file = FileHandle(forReadingAtPath: path) {
-                defer { try? file.close() }
-                if let bytes = try? file.read(upToCount: limit + 1), bytes.count <= limit {
-                    data = bytes
-                }
-            }
             attachments.append(Attachment(
                 id: text(statement, 0) ?? String(sqlite3_column_int64(statement, 4)),
                 filename: text(statement, 2) ?? path.map { ($0 as NSString).lastPathComponent },
                 mimeType: text(statement, 3),
-                dataBase64: data?.base64EncodedString(),
-                displayDataBase64: data.flatMap(Attachment.displayData)?.base64EncodedString()
+                mediaID: Self.encodeOpaque("attachment:\(sqlite3_column_int64(statement, 4))"),
+                path: path,
+                dataBase64: nil,
+                displayDataBase64: nil
             ))
         }
         return attachments
+    }
+
+    func attachmentPath(mediaID: String) throws -> String? {
+        guard let decoded = Self.decodeOpaque(mediaID), decoded.hasPrefix("attachment:"),
+              let rowID = Int64(decoded.dropFirst("attachment:".count)), rowID > 0,
+              Self.encodeOpaque("attachment:\(rowID)") == mediaID else { return nil }
+        databaseLock.lock()
+        defer { databaseLock.unlock() }
+        guard hasAttachments else { return nil }
+        let statement = try prepare("SELECT filename FROM attachment WHERE ROWID = ?")
+        defer { sqlite3_finalize(statement) }
+        bind(rowID, to: 1, in: statement)
+        guard try step(statement) else { return nil }
+        return text(statement, 0).map { ($0 as NSString).expandingTildeInPath }
     }
 
     private func messageFilters(alias: String) -> String {

@@ -3,21 +3,20 @@ import Foundation
 public struct HTTPResponse: Sendable {
     public let status: Int
     public let body: Data
+    public let contentType: String
 
-    public init(status: Int, body: Data) {
+    public init(status: Int, body: Data, contentType: String = "application/json") {
         self.status = status
         self.body = body
+        self.contentType = contentType
     }
 }
 
 public final class NatterwireAPI: Sendable {
     private let database: MessagesDatabase
-    private let encoder: JSONEncoder
 
     public init(database: MessagesDatabase) {
         self.database = database
-        encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
     }
 
     public func respond(method: String, target: String) -> HTTPResponse {
@@ -40,16 +39,28 @@ public final class NatterwireAPI: Sendable {
             limit = 50
         }
         do {
+            if parts.count == 2, parts[0] == "attachments" {
+                guard let path = try database.attachmentPath(mediaID: parts[1]) else {
+                    return json(status: 404, ErrorBody(error: "not found"))
+                }
+                return try database.media.response(id: parts[1], path: path, version: query["version"])
+            }
             if parts == ["chats"] {
                 return json(status: 200, try database.chats(limit: limit, before: query["before"]))
             }
             if parts.count == 3, parts[0] == "chats", parts[2] == "messages" {
-                return json(status: 200, try database.messages(chatID: parts[1], limit: limit, before: query["before"]))
+                return json(status: 200, try database.messages(chatID: parts[1], limit: limit, before: query["before"], metadataOnly: query["media"] == "metadata"))
             }
             if parts.count == 2, parts[0] == "messages" {
-                return json(status: 200, try database.messages(chatID: parts[1], limit: limit, before: query["before"]))
+                return json(status: 200, try database.messages(chatID: parts[1], limit: limit, before: query["before"], metadataOnly: query["media"] == "metadata"))
             }
             return json(status: 404, ErrorBody(error: "not found"))
+        } catch AttachmentMediaError.notFound {
+            return json(status: 404, ErrorBody(error: "not found"))
+        } catch AttachmentMediaError.tooLarge {
+            return json(status: 413, ErrorBody(error: "attachment too large"))
+        } catch AttachmentMediaError.changed {
+            return json(status: 409, ErrorBody(error: "attachment version changed"))
         } catch MessagesDatabaseError.invalidIdentifier {
             return json(status: 400, ErrorBody(error: "invalid chat identifier"))
         } catch MessagesDatabaseError.invalidCursor {
@@ -60,7 +71,9 @@ public final class NatterwireAPI: Sendable {
     }
 
     private func json<T: Encodable>(status: Int, _ value: T) -> HTTPResponse {
-        HTTPResponse(status: status, body: (try? encoder.encode(value)) ?? Data(#"{"error":"encoding failed"}"#.utf8))
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return HTTPResponse(status: status, body: (try? encoder.encode(value)) ?? Data(#"{"error":"encoding failed"}"#.utf8))
     }
 }
 

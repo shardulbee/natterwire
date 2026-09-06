@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import ImageIO
 import SQLite3
@@ -23,18 +24,153 @@ import Testing
         let fixture = try Fixture(attachmentPaths: [path.path])
         let database = try MessagesDatabase(path: fixture.path)
         let chat = try #require(database.chats(limit: 1, before: nil).items.first)
-        let response = NatterwireAPI(database: database).respond(method: "GET", target: "/messages/\(chat.id)?limit=1")
+        let api = NatterwireAPI(database: database)
+        let metadata = api.respond(method: "GET", target: "/messages/\(chat.id)?limit=1&media=metadata")
+        let metadataPage = try JSONDecoder().decode(Page<Message>.self, from: metadata.body)
+        let info = try #require(metadataPage.items.first?.attachments.first)
+        #expect(info.width == 1536)
+        #expect(info.height == 2048)
+        #expect(info.dataBase64 == nil && info.displayDataBase64 == nil)
+        #expect(database.media.cachedBytes == 0)
+        let mediaID = try #require(info.mediaID)
+        let version = try #require(info.version)
+        let binary = api.respond(method: "GET", target: "/attachments/\(mediaID)?version=\(version)")
+        #expect(binary.status == 200)
+        #expect(binary.contentType == "image/jpeg")
+        #expect(database.media.cachedBytes == binary.body.count)
+        let response = api.respond(method: "GET", target: "/messages/\(chat.id)?limit=1")
         #expect(response.status == 200)
         let page = try JSONDecoder().decode(Page<Message>.self, from: response.body)
         let attachment = try #require(page.items.first?.attachments.first)
         #expect(attachment.dataBase64 == (original as Data).base64EncodedString())
         let display = try #require(attachment.displayDataBase64.flatMap { Data(base64Encoded: $0) })
+        #expect(display == binary.body)
         let source = try #require(CGImageSourceCreateWithData(display as CFData, nil))
         #expect(CGImageSourceGetType(source) as String? == "public.jpeg")
         let decoded = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
         #expect(decoded.width == 1536)
         #expect(decoded.height == 2048)
         #expect(Attachment.displayData(display) == nil)
+    }
+
+    @Test func metadataBinaryVersionsBudgetAndPathSafety() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("image.png")
+        let missing = directory.appendingPathComponent("missing.png")
+        let large = directory.appendingPathComponent("large.png")
+        let context = try #require(CGContext(data: nil, width: 12, height: 8, bitsPerComponent: 8,
+                                            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        let image = try #require(context.makeImage())
+        let output = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        let png = output as Data
+        try png.write(to: path)
+        try Data().write(to: large)
+        let file = try FileHandle(forWritingTo: large)
+        try file.truncate(atOffset: UInt64(AttachmentMedia.byteLimit + 1))
+        try file.close()
+        let fixture = try Fixture(attachmentPaths: [path.path, path.path, missing.path, large.path, nil])
+        let database = try MessagesDatabase(path: fixture.path)
+        let api = NatterwireAPI(database: database)
+        let chat = try #require(database.chats(limit: 1, before: nil).items.first)
+        var attachments: [Attachment] = []
+        for route in ["/messages/\(chat.id)", "/chats/\(chat.id)/messages"] {
+            let response = api.respond(method: "GET", target: route + "?media=metadata&limit=1")
+            #expect(response.status == 200)
+            let json = String(decoding: response.body, as: UTF8.self)
+            #expect(!json.contains("dataBase64") && !json.contains("displayDataBase64"))
+            #expect(!json.contains(directory.path))
+            attachments = try #require(JSONDecoder().decode(Page<Message>.self, from: response.body).items.first).attachments
+            #expect(attachments.allSatisfy { $0.mediaID != nil && $0.version != nil })
+            #expect(attachments[0].width == 12 && attachments[0].height == 8)
+            #expect(attachments[2].version == "missing")
+        }
+        let id = try #require(attachments[0].mediaID)
+        let version = try #require(attachments[0].version)
+        let target = "/attachments/\(id)?version=\(version)"
+        let binary = api.respond(method: "GET", target: target)
+        #expect(binary.status == 200 && binary.contentType == "image/png")
+        #expect(binary.body == png)
+        #expect(api.respond(method: "GET", target: target).body == png)
+        #expect(database.media.cachedBytes == png.count)
+        let port = UInt16.random(in: 20_000...50_000)
+        let server = HTTPServer(host: "127.0.0.1", port: port, api: api)
+        let ready = DispatchSemaphore(value: 0)
+        let done = DispatchSemaphore(value: 0)
+        let serverResult = ServerResult()
+        DispatchQueue.global().async {
+            defer { done.signal() }
+            do { try server.run { ready.signal() } } catch { serverResult.set(error) }
+        }
+        defer { server.stop(); _ = done.wait(timeout: .now() + 2) }
+        try #require(ready.wait(timeout: .now() + 2) == .success)
+        // A stalled peer must not block another connection, unlike the old serial server.
+        let stalled = try connect(port: port)
+        defer { close(stalled) }
+        let wire = try request(port: port, target: target)
+        let headerEnd = try #require(wire.range(of: Data("\r\n\r\n".utf8)))
+        let header = String(decoding: wire[..<headerEnd.lowerBound], as: UTF8.self)
+        #expect(header.contains("HTTP/1.1 200 OK"))
+        #expect(header.contains("Content-Type: image/png"))
+        #expect(header.contains("Content-Length: \(png.count)"))
+        #expect(Data(wire[headerEnd.upperBound...]) == png)
+        let textWire = try request(port: port, target: "/chats?limit=1")
+        #expect(String(decoding: textWire, as: UTF8.self).contains("HTTP/1.1 200 OK"))
+        #expect(serverResult.error == nil)
+        #expect(api.respond(method: "GET", target: "/attachments/\(id)").status == 409)
+        for badID in ["1", "..%2Fetc%2Fpasswd", Data(path.path.utf8).base64EncodedString(), "YXR0YWNobWVudDo5OTk5"] {
+            let response = api.respond(method: "GET", target: "/attachments/\(badID)?version=\(version)")
+            #expect(response.status == 404)
+            #expect(!String(decoding: response.body, as: UTF8.self).contains(directory.path))
+        }
+        for index in [2, 3, 4] {
+            let mediaID = try #require(attachments[index].mediaID)
+            let stamp = try #require(attachments[index].version)
+            #expect(api.respond(method: "GET", target: "/attachments/\(mediaID)?version=\(stamp)").status == (index == 3 ? 413 : 404))
+        }
+        let cache = AttachmentMedia(budget: png.count)
+        _ = try cache.response(id: id, path: path.path, version: version)
+        _ = try cache.response(id: "second", path: path.path, version: version)
+        #expect(cache.cachedBytes == png.count)
+        let noCache = AttachmentMedia(budget: png.count - 1)
+        #expect(try noCache.response(id: id, path: path.path, version: version).body == png)
+        #expect(noCache.cachedBytes == 0)
+        try (png + Data([0])).write(to: path)
+        #expect(api.respond(method: "GET", target: target).status == 409)
+        #expect(database.media.cachedBytes == 0)
+        let updated = try #require(database.messages(chatID: chat.id, limit: 1, before: nil, metadataOnly: true).items.first?.attachments.first)
+        let newVersion = try #require(updated.version)
+        #expect(newVersion != version)
+        #expect(api.respond(method: "GET", target: "/attachments/\(id)?version=\(newVersion)").body == png + Data([0]))
+        try png.write(to: missing)
+        let recovered = try database.messages(chatID: chat.id, limit: 1, before: nil, metadataOnly: true).items[0].attachments[2]
+        let recoveredID = try #require(recovered.mediaID)
+        let recoveredVersion = try #require(recovered.version)
+        #expect(api.respond(method: "GET", target: "/attachments/\(recoveredID)?version=\(recoveredVersion)").status == 200)
+        try FileManager.default.removeItem(at: path)
+        #expect(api.respond(method: "GET", target: target).status == 404)
+    }
+
+    @Test func concurrentMetadataAndChatQueriesKeepStatementsAndEncodersIndependent() throws {
+        let fixture = try Fixture(attachmentPaths: [nil])
+        let database = try MessagesDatabase(path: fixture.path)
+        let api = NatterwireAPI(database: database)
+        let id = try #require(database.chats(limit: 1, before: nil).items.first?.id)
+        DispatchQueue.concurrentPerform(iterations: 60) { index in
+            let target = index.isMultiple(of: 2) ? "/chats?limit=1" : "/messages/\(id)?media=metadata&limit=1"
+            let response = api.respond(method: "GET", target: target)
+            #expect(response.status == 200)
+            if index.isMultiple(of: 2) {
+                #expect((try? JSONDecoder().decode(Page<Chat>.self, from: response.body).items.first?.id) == id)
+            } else {
+                #expect((try? JSONDecoder().decode(Page<Message>.self, from: response.body).items.first?.id) == "image")
+            }
+        }
     }
 
     @Test func sendsAttachmentsAsBase64AndKeepsAttachmentOnlyMessages() throws {
@@ -262,6 +398,44 @@ import Testing
         server.stop()
         #expect(done.wait(timeout: .now() + 2) == .success)
         if let error = result.error { throw error }
+    }
+
+    private func connect(port: UInt16) throws -> Int32 {
+        let client = socket(AF_INET, SOCK_STREAM, 0)
+        try #require(client >= 0)
+        var timeout = timeval(tv_sec: 2, tv_usec: 0)
+        setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout)))
+        var noSigPipe: Int32 = 1
+        setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout.size(ofValue: noSigPipe)))
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = port.bigEndian
+        inet_pton(AF_INET, "127.0.0.1", &address.sin_addr)
+        let result = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(client, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        if result != 0 { close(client) }
+        try #require(result == 0)
+        return client
+    }
+
+    private func request(port: UInt16, target: String) throws -> Data {
+        let client = try connect(port: port)
+        defer { close(client) }
+        let request = Data("GET \(target) HTTP/1.1\r\nHost: localhost\r\n\r\n".utf8)
+        let sent = request.withUnsafeBytes { Darwin.send(client, $0.baseAddress!, $0.count, 0) }
+        try #require(sent == request.count)
+        var response = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = recv(client, &buffer, buffer.count, 0)
+            try #require(count >= 0)
+            if count == 0 { return response }
+            response.append(contentsOf: buffer[..<count])
+        }
     }
 }
 
