@@ -20,6 +20,26 @@ import Testing
         #expect(second.items.map(\.text) == ["second", "first"])
     }
 
+    @Test func resolvesMessageSendersAndFallsBackToHandles() throws {
+        let fixture = try Fixture()
+        let resolver = ChatNameResolver(
+            emailLookup: { $0 == "fixture@example.invalid" ? "Fixture Friend" : nil },
+            phoneLookup: { $0 == "+14155550100" ? "Phone Friend" : nil })
+        let database = try MessagesDatabase(path: fixture.path, nameResolver: resolver)
+        let fallback = try MessagesDatabase(path: fixture.path)
+        for chat in try database.chats(limit: 100, before: nil).items {
+            let messages = try database.messages(chatID: chat.id, limit: 100, before: nil).items
+            let original = try fallback.messages(chatID: chat.id, limit: 100, before: nil).items
+            for (message, raw) in zip(messages, original) {
+                #expect(message.sender == raw.sender.map { resolver.name(for: $0) ?? $0 })
+                if message.id == "m1" { #expect(message.sender == "Fixture Friend") }
+                if message.id == "m2" { #expect(message.sender == nil) }
+                if message.id == "phone-chat" { #expect(message.sender == "Phone Friend") }
+                if message.id == "group-chat" { #expect(message.sender == "group-one@example.invalid") }
+            }
+        }
+    }
+
     @Test func undecodableAndEmptyBodiesStillPaginate() throws {
         let fixture = try Fixture()
         let database = try MessagesDatabase(path: fixture.path)
@@ -200,6 +220,7 @@ private final class Fixture {
             INSERT INTO handle VALUES (2, 'second@example.invalid');
             INSERT INTO handle VALUES (3, 'group-one@example.invalid');
             INSERT INTO handle VALUES (4, 'group-two@example.invalid');
+            INSERT INTO handle VALUES (5, '+1 (415) 555-0100');
             INSERT INTO message VALUES (1, 'm1', 'first', NULL, 100, 0, 1, 'iMessage', 0, 0, 0, 0);
             INSERT INTO message VALUES (2, 'm2', 'second', NULL, 200, 1, NULL, 'iMessage', 0, 0, 0, 0);
             INSERT INTO message VALUES (4, 'reaction', 'liked', NULL, 400, 0, 1, 'iMessage', 0, 0, 2000, 0);
@@ -213,9 +234,9 @@ private final class Fixture {
             INSERT INTO message VALUES (10, 'body-tail', 'tail', NULL, 10, 0, 1, 'iMessage', 0, 0, 0, 0);
             INSERT INTO chat_message_join VALUES (3, 8), (3, 9), (3, 10);
             INSERT INTO message VALUES (11, 'email-chat', 'email', NULL, 40, 0, 1, 'iMessage', 0, 0, 0, 0);
-            INSERT INTO message VALUES (12, 'phone-chat', 'phone', NULL, 35, 0, 1, 'iMessage', 0, 0, 0, 0);
+            INSERT INTO message VALUES (12, 'phone-chat', 'phone', NULL, 35, 0, 5, 'iMessage', 0, 0, 0, 0);
             INSERT INTO message VALUES (13, 'missing-chat', 'missing', NULL, 30, 0, 1, 'iMessage', 0, 0, 0, 0);
-            INSERT INTO message VALUES (14, 'group-chat', 'group', NULL, 5, 0, 1, 'iMessage', 0, 0, 0, 0);
+            INSERT INTO message VALUES (14, 'group-chat', 'group', NULL, 5, 0, 3, 'iMessage', 0, 0, 0, 0);
             INSERT INTO chat_message_join VALUES (4, 11), (5, 12), (6, 13), (7, 14);
             INSERT INTO message VALUES (15, 'named-group-chat', 'named group', NULL, 4, 0, 1, 'iMessage', 0, 0, 0, 0);
             INSERT INTO message VALUES (16, 'denied-chat', 'denied', NULL, 3, 0, 1, 'iMessage', 0, 0, 0, 0);

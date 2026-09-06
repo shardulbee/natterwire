@@ -6,6 +6,8 @@
 
 Natterwire is a native macOS menu-bar app that exposes a read-only REST API for the local Messages database.
 
+The [Linux terminal client](tui/README.md) uses Go and Vaxis to browse chats and compose local drafts. Sending is not supported by the API yet.
+
 ## Install
 
 Natterwire requires macOS 14 or newer, Swift 6, and Xcode command-line tools.

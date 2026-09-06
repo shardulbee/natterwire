@@ -4,3 +4,6 @@
 dist/
 .amp-review/
 *.log
+tui/bin/
+tui/.venv/
+tui/tests/__pycache__/

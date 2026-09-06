@@ -284,7 +284,7 @@ public final class MessagesDatabase: @unchecked Sendable {
                 text: value,
                 sentAt: Self.dateString(date),
                 isFromMe: sqlite3_column_int(statement, 4) != 0,
-                sender: text(statement, 5),
+                sender: text(statement, 5).map { nameResolver.name(for: $0) ?? $0 },
                 service: text(statement, 6)
             ), date, rowID))
         }
