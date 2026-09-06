@@ -34,7 +34,7 @@ Use `GOARCH=arm64` and a different output directory for ARM Linux.
 
 Requires at least 60 columns by 14 rows. Focus stays on the sidebar except while composing. Up/Down switch chats; PageUp/PageDown scroll transcript half-pages; End jumps to latest. Color indicates focus; `>` marks the open chat. Selecting a chat displays its cached transcript immediately while refreshing in the background; uncached chats need an initial fetch. Switching chats resets to the bottom; drafts survive switches within the running session. The empty composer stays hidden until insert mode.
 
-Image attachments render inline as colored half-block previews, up to 48 columns by 12 rows, and scroll with the transcript. PNG, JPEG, GIF (first frame), and WebP are supported; HEIC and other unsupported, missing, or oversized images show a filename instead. Decoding is limited to 10 MiB and 32 megapixels per image, with a 64 MiB API page limit. `NO_COLOR` keeps attachment labels without previews. Requires the Mac API's `attachments` fields.
+Images display through the Kitty graphics protocol when supported, fitted to the available chat area with their aspect ratio preserved. There is no fixed thumbnail resolution or colored-block renderer. Other terminals show only `[Image: filename]`. PNG, JPEG, GIF (first frame), WebP, and HEIC are supported; the Mac supplies a full-resolution, orientation-correct JPEG for HEIC in `displayDataBase64` while preserving the original file in `dataBase64`. Missing or undecodable images keep their filename label. The decoder rejects images over 32 megapixels; API pages are limited to 64 MiB.
 
 ## Refresh behavior
 
@@ -54,6 +54,8 @@ python3 -m venv .venv
 .venv/bin/python tests/smoke.py bin/natterwire-tui
 .venv/bin/python tests/images.py bin/natterwire-tui
 .venv/bin/python tests/latency.py bin/natterwire-tui
+# Linux native-graphics check, requires Kitty, Xvfb, xauth, and ImageMagick:
+xvfb-run -a .venv/bin/python tests/images.py bin/natterwire-tui --kitty
 ```
 
 The smoke test runs the binary in a terminal against synthetic HTTP data, including a real 30-second poll. Add `--captures ../.amp-review/tui` to capture terminal screens and ANSI recordings. Latency measures key injection to completed ANSI frame, not terminal presentation or remote transport. `tests/emoji.py` exercises emoji scrolling; `tests/render.cjs` replays recordings in browser xterm.js (dependencies and usage in its header).

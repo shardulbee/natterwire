@@ -1,10 +1,42 @@
 import Foundation
+import ImageIO
 import SQLite3
 import Testing
 @testable import Natterwire
 @testable import NatterwireCore
 
 @Suite struct NatterwireTests {
+    @Test func suppliesFullResolutionJPEGForHEICWithoutChangingOriginal() throws {
+        let context = try #require(CGContext(
+            data: nil, width: 2048, height: 1536, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        context.setFillColor(red: 1, green: 0.25, blue: 0, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: 2048, height: 1536))
+        let image = try #require(context.makeImage())
+        let original = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(original, "public.heic" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, [kCGImagePropertyOrientation: 6] as CFDictionary)
+        #expect(CGImageDestinationFinalize(destination))
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).heic")
+        try (original as Data).write(to: path)
+        defer { try? FileManager.default.removeItem(at: path) }
+        let fixture = try Fixture(attachmentPaths: [path.path])
+        let database = try MessagesDatabase(path: fixture.path)
+        let chat = try #require(database.chats(limit: 1, before: nil).items.first)
+        let response = NatterwireAPI(database: database).respond(method: "GET", target: "/messages/\(chat.id)?limit=1")
+        #expect(response.status == 200)
+        let page = try JSONDecoder().decode(Page<Message>.self, from: response.body)
+        let attachment = try #require(page.items.first?.attachments.first)
+        #expect(attachment.dataBase64 == (original as Data).base64EncodedString())
+        let display = try #require(attachment.displayDataBase64.flatMap { Data(base64Encoded: $0) })
+        let source = try #require(CGImageSourceCreateWithData(display as CFData, nil))
+        #expect(CGImageSourceGetType(source) as String? == "public.jpeg")
+        let decoded = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        #expect(decoded.width == 1536)
+        #expect(decoded.height == 2048)
+        #expect(Attachment.displayData(display) == nil)
+    }
+
     @Test func sendsAttachmentsAsBase64AndKeepsAttachmentOnlyMessages() throws {
         let directory = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("natterwire-test-\(UUID().uuidString)")

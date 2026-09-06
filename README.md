@@ -35,6 +35,8 @@ Lists return `{ "items": [...], "nextBefore": "..." }`; `limit` defaults to 50 w
 
 Messages include `attachments: [{ id, filename, mimeType, dataBase64 }]`, or `[]` for text-only messages. `dataBase64` contains the original file bytes as standard base64, omitted when the file is unavailable or larger than 10 MiB. Optional metadata is omitted when unknown; local paths are not returned. Attachment-only messages are included even without a text body. Base64 adds roughly 33% to file size, so use smaller pages for media-heavy chats.
 
+HEIC/HEIF images up to 32 megapixels also include `displayDataBase64`, a full-resolution, orientation-correct JPEG for clients without HEIC decoders. The original `dataBase64` and MIME type remain unchanged.
+
 ```sh
 curl 'http://127.0.0.1:8741/chats?limit=20'
 ```

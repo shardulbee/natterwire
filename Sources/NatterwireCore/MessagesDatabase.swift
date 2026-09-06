@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import SQLite3
 
 public enum MessagesDatabaseError: Error, CustomStringConvertible {
@@ -39,6 +40,31 @@ public struct Attachment: Codable, Sendable {
     public let mimeType: String?
     // Omitted when the file is unavailable or exceeds the inline limit.
     public let dataBase64: String?
+    // Full-resolution, orientation-correct JPEG for clients without HEIC support.
+    public let displayDataBase64: String?
+
+    static func displayData(_ data: Data) -> Data? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let type = CGImageSourceGetType(source) as String?,
+              ["public.heic", "public.heif"].contains(type),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0, width <= 32_000_000 / height else { return nil }
+        // ImageIO's transform API applies orientation. Using the original maximum
+        // dimension preserves full resolution; this does not generate a thumbnail.
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(width, height),
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, "public.jpeg" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 1.0] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return output as Data
+    }
 }
 
 public struct Page<Element: Codable & Sendable>: Codable, Sendable {
@@ -334,7 +360,8 @@ public final class MessagesDatabase: @unchecked Sendable {
                 id: text(statement, 0) ?? String(sqlite3_column_int64(statement, 4)),
                 filename: text(statement, 2) ?? path.map { ($0 as NSString).lastPathComponent },
                 mimeType: text(statement, 3),
-                dataBase64: data?.base64EncodedString()
+                dataBase64: data?.base64EncodedString(),
+                displayDataBase64: data.flatMap(Attachment.displayData)?.base64EncodedString()
             ))
         }
         return attachments

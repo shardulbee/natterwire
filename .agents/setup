@@ -12,3 +12,9 @@ fi
 go -C tui mod download
 python3 -m venv tui/.venv
 tui/.venv/bin/pip install -q pyte pillow
+
+# Native Kitty graphics verification in a disposable X11 display.
+if ! command -v kitty >/dev/null || ! command -v xvfb-run >/dev/null || ! command -v xdotool >/dev/null; then
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq kitty xvfb xauth xdotool
+fi

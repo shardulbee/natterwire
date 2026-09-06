@@ -23,7 +23,7 @@ func equalItem(a, b item) bool {
 	return a.ID == b.ID && a.DisplayName == b.DisplayName && a.Text == b.Text &&
 		a.SentAt == b.SentAt && a.Sender == b.Sender && a.IsFromMe == b.IsFromMe &&
 		slices.EqualFunc(a.Attachments, b.Attachments, func(a, b attachment) bool {
-			return a.ID == b.ID && a.Filename == b.Filename && a.MimeType == b.MimeType && a.DataBase64 == b.DataBase64
+			return a.ID == b.ID && a.Filename == b.Filename && a.MimeType == b.MimeType && a.DataBase64 == b.DataBase64 && a.DisplayDataBase64 == b.DisplayDataBase64
 		})
 }
 

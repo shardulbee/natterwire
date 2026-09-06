@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"image"
 	"os"
 	"strings"
 
@@ -31,7 +32,7 @@ type row struct {
 	text, id string
 	offset   int
 	style    vaxis.Style
-	image    *vaxis.HalfBlockImage
+	image    *inlineImage
 	imageRow int
 }
 
@@ -40,6 +41,7 @@ type layout struct {
 	width, height, top, newMessages int
 	head                            string
 	dirty, following                bool
+	cell                            image.Point
 }
 
 func (l *layout) bottom() {
@@ -56,8 +58,8 @@ func (l *layout) scroll(n int) {
 }
 
 // Byte offsets keep the same message text visible when new pages arrive or width changes.
-func (l *layout) prepare(messages []item, width, height int, measure func(string) int, vx *vaxis.Vaxis) {
-	if l.dirty || l.width != width {
+func (l *layout) prepare(messages []item, width, height int, measure func(string) int, cell image.Point) {
+	if l.dirty || l.width != width || l.cell != cell || (cell.Y > 0 && l.height != height) {
 		anchor := row{}
 		if !l.following && l.top < len(l.rows) {
 			anchor = l.rows[l.top]
@@ -125,11 +127,9 @@ func (l *layout) prepare(messages []item, width, height int, measure func(string
 			for _, a := range m.Attachments {
 				l.rows = append(l.rows, row{text: a.label(), id: m.ID, offset: offset, style: muted})
 				offset++
-				if a.preview != nil && os.Getenv("NO_COLOR") == "" {
-					preview := vx.NewHalfBlockImage(a.preview)
-					preview.Resize(min(width, 48), 12)
-					_, h := preview.CellSize()
-					for y := 0; y < h; y++ {
+				if a.preview != nil && cell.X > 0 && cell.Y > 0 {
+					preview := newInlineImage(a.preview, width, height, cell)
+					for y := 0; y < preview.rows; y++ {
 						l.rows = append(l.rows, row{id: m.ID, offset: offset, image: preview, imageRow: y})
 						offset++
 					}
@@ -147,7 +147,7 @@ func (l *layout) prepare(messages []item, width, height int, measure func(string
 				}
 			}
 		}
-		l.width, l.dirty = width, false
+		l.width, l.cell, l.dirty = width, cell, false
 	}
 	l.height = height
 	if l.following {
@@ -172,6 +172,15 @@ func line(win vaxis.Window, y int, text string, s vaxis.Style, measure func(stri
 }
 
 func (a *app) draw(vx *vaxis.Vaxis, measure func(string) int) {
+	visibleImages := make(map[*inlineImage]bool)
+	defer func() {
+		for p := range a.images {
+			if !visibleImages[p] {
+				p.destroy(vx)
+			}
+		}
+		a.images = visibleImages
+	}()
 	root := vx.Window()
 	root.Clear()
 	vx.HideCursor()
@@ -223,14 +232,15 @@ func (a *app) draw(vx *vaxis.Vaxis, measure func(string) int) {
 		if showDraft {
 			historyHeight -= 4
 		}
-		c.prepare(c.Items, cw, historyHeight, measure, vx)
+		c.prepare(c.Items, cw, historyHeight, measure, kittyCell(vx))
 		history := content.New(0, 2, cw, historyHeight)
 		for i := c.top; i < min(len(c.rows), c.top+historyHeight); i++ {
 			r := c.rows[i]
 			if r.image != nil {
 				if r.imageRow == 0 || i == c.top {
-					w, h := r.image.CellSize()
-					r.image.Draw(history.New(0, i-c.top-r.imageRow, w, h))
+					rows := min(r.image.rows-r.imageRow, c.top+historyHeight-i)
+					r.image.draw(vx, history.New(0, i-c.top, cw, rows), r.imageRow, rows)
+					visibleImages[r.image] = true
 				}
 			} else {
 				line(history, i-c.top, r.text, r.style, measure)

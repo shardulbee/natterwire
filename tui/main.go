@@ -38,6 +38,7 @@ type app struct {
 	pendingChats, pendingMessages bool
 	moreChats, olderMessages      bool
 	responses                     chan response
+	images                        map[*inlineImage]bool
 }
 
 func newApp(base string, demo bool) *app {
@@ -248,6 +249,11 @@ func run(base string, demo bool) error {
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	defer client.CloseIdleConnections()
 	a := newApp(base, demo)
+	defer func() {
+		for p := range a.images {
+			p.destroy(vx)
+		}
+	}()
 	width := terminalWidth(vx)
 	timer := time.NewTicker(30 * time.Second)
 	defer timer.Stop()

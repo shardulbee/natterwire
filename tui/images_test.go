@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"net/http"
 	"net/http/httptest"
@@ -33,7 +34,7 @@ func TestImagePageAndRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	preview := p.Items[0].Attachments[0]
-	if preview.Filename != "photo .png" || preview.preview == nil || preview.preview.Bounds().Size() != image.Pt(48, 24) {
+	if preview.Filename != "photo .png" || preview.preview == nil || preview.preview.Bounds().Size() != image.Pt(96, 48) {
 		t.Fatalf("missing or oversized thumbnail: %+v", preview)
 	}
 	if got := color.NRGBAModel.Convert(preview.preview.At(0, 0)); got != (color.NRGBA{R: 255, A: 255}) {
@@ -63,17 +64,33 @@ func TestPreviewFallbacks(t *testing.T) {
 	}
 }
 
+func TestFullResolutionHEICDisplay(t *testing.T) {
+	var data bytes.Buffer
+	if err := jpeg.Encode(&data, image.NewRGBA(image.Rect(0, 0, 2048, 1536)), nil); err != nil {
+		t.Fatal(err)
+	}
+	a := attachment{Filename: "photo.heic", MimeType: "image/heic", DataBase64: "unsupported HEIC", DisplayDataBase64: base64.StdEncoding.EncodeToString(data.Bytes())}
+	decoded := decodePreview(a)
+	if decoded == nil || decoded.Bounds().Size() != image.Pt(2048, 1536) {
+		t.Fatal("HEIC display representation was not decoded at full resolution")
+	}
+	b := a
+	b.DisplayDataBase64 = ""
+	if equalItem(item{Attachments: []attachment{a}}, item{Attachments: []attachment{b}}) {
+		t.Fatal("new HEIC display data must refresh the cache")
+	}
+}
+
 func TestImageLayout(t *testing.T) {
-	t.Setenv("NO_COLOR", "")
 	attachments := []attachment{
-		{Filename: "one.png", MimeType: "image/png", preview: image.NewNRGBA(image.Rect(0, 0, 48, 24))},
+		{Filename: "one.png", MimeType: "image/png", preview: image.NewNRGBA(image.Rect(0, 0, 480, 240))},
 		{Filename: "two.heic", MimeType: "image/heic"},
 	}
 	messages := []item{{ID: "1", Text: "\ufffcCaption", Attachments: attachments}}
 	l := layout{dirty: true, following: true}
-	vx := &vaxis.Vaxis{}
-	l.prepare(messages, 60, 5, unicodeWidth, vx)
-	if l.rows[1].text != "Caption" || l.rows[2].text != "[Image: one.png]" || l.rows[15].text != "[Image preview unavailable: two.heic]" {
+	cell := image.Pt(10, 20)
+	l.prepare(messages, 60, 15, unicodeWidth, cell)
+	if l.rows[1].text != "Caption" || l.rows[2].text != "[Image: one.png]" || l.rows[15].text != "[Image: two.heic]" {
 		t.Fatalf("lost caption or attachment labels: %+v", l.rows)
 	}
 	if l.rows[3].image == nil || l.rows[14].imageRow != 11 {
@@ -82,20 +99,22 @@ func TestImageLayout(t *testing.T) {
 	l.scroll(-5)
 	anchor := l.rows[l.top]
 	l.dirty = true
-	l.prepare(append([]item{{ID: "2", Text: "new"}}, messages...), 60, 5, unicodeWidth, vx)
+	l.prepare(append([]item{{ID: "2", Text: "new"}}, messages...), 60, 15, unicodeWidth, cell)
 	if l.rows[l.top].id != anchor.id || l.rows[l.top].imageRow != anchor.imageRow {
 		t.Fatal("refresh moved partially visible image")
 	}
-	l.prepare(messages, 20, 5, unicodeWidth, vx)
-	if w, h := l.rows[3].image.CellSize(); w > 20 || h > 12 {
+	l.prepare(messages, 20, 15, unicodeWidth, cell)
+	if p := l.rows[3].image; p.pixels.Bounds().Dx() > 20*cell.X || p.rows > 12 {
 		t.Fatal("resize exceeded the transcript")
 	}
-	t.Setenv("NO_COLOR", "1")
-	l.dirty = true
-	l.prepare(messages, 60, 5, unicodeWidth, vx)
+	// Capability changes must rebuild even when terminal columns are unchanged.
+	l.prepare(messages, 20, 15, unicodeWidth, kittyCell(&vaxis.Vaxis{}))
 	for _, r := range l.rows {
 		if r.image != nil {
-			t.Fatal("NO_COLOR should retain labels without colored previews")
+			t.Fatal("terminals without Kitty should show only labels")
 		}
+	}
+	if got := (attachment{Filename: "51B33FA8.pluginPayloadAttachment"}).label(); got != "[Image: 51B33FA8.pluginPayloadAttachment]" {
+		t.Fatal(got)
 	}
 }
