@@ -52,6 +52,7 @@ type Page[T any] struct {
 }
 
 type database struct {
+	nativeName    func(string) string
 	db            *sql.DB
 	message, chat map[string]bool
 	tables        map[string]bool
@@ -346,7 +347,7 @@ func (d *database) chatName(ctx context.Context, explicit *string, guid string, 
 				continue
 			}
 			name := strings.TrimSpace(*h)
-			if n := d.names.lookup(name); n != "" {
+			if n := d.contactName(name); n != "" {
 				name = n
 			}
 			if !slices.Contains(names, name) {
@@ -370,7 +371,7 @@ func (d *database) chatName(ctx context.Context, explicit *string, guid string, 
 			handle = strings.TrimSpace(s)
 		}
 	}
-	if name := d.names.lookup(handle); name != "" {
+	if name := d.contactName(handle); name != "" {
 		return name, nil
 	}
 	if explicit != nil {
@@ -437,7 +438,7 @@ func (d *database) messages(ctx context.Context, id string, limit int, before *s
 		v.message.IsFromMe = fromMe != 0
 		v.message.SentAt = dateString(v.date)
 		if v.message.Sender != nil {
-			if n := d.names.lookup(*v.message.Sender); n != "" {
+			if n := d.contactName(*v.message.Sender); n != "" {
 				v.message.Sender = &n
 			}
 		}

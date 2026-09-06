@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ "$(uname -s)" != Darwin ]]; then
+  echo "scripts/build-app requires macOS" >&2
+  exit 1
+fi
+
+output=""
+identity=""
+reference="$HOME/Applications/Natterwire.app"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output) output="${2:?--output requires a path}"; shift 2 ;;
+    --sign) identity="${2:?--sign requires an identity}"; shift 2 ;;
+    --adhoc) identity="-"; shift ;;
+    --reference) reference="${2:?--reference requires a path}"; shift 2 ;;
+    *) echo "Usage: scripts/build-app --output PATH [--sign IDENTITY | --adhoc] [--reference APP]" >&2; exit 2 ;;
+  esac
+done
+[[ -n "$output" ]] || { echo "--output is required" >&2; exit 2; }
+[[ ! -e "$output" ]] || { echo "output already exists: $output" >&2; exit 1; }
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/natterwire-build.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+app="$work/Natterwire.app"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$work/NatterwireIcon.iconset"
+cp "$root/macos/Natterwire/Info.plist" "$app/Contents/Info.plist"
+
+source_icon="$root/macos/Natterwire/Assets/NatterwireIcon.png"
+for spec in '16 16x16' '32 16x16@2x' '32 32x32' '64 32x32@2x' '128 128x128' '256 128x128@2x' '256 256x256' '512 256x256@2x' '512 512x512' '1024 512x512@2x'; do
+  read -r pixels name <<<"$spec"
+  sips -z "$pixels" "$pixels" "$source_icon" --out "$work/NatterwireIcon.iconset/icon_${name}.png" >/dev/null
+done
+iconutil -c icns "$work/NatterwireIcon.iconset" -o "$app/Contents/Resources/NatterwireIcon.icns"
+
+# The Darwin build includes the Objective-C Contacts bridge and Apple frameworks.
+CGO_ENABLED=1 go -C "$root/api" build -trimpath -o "$app/Contents/MacOS/natterwire-api" .
+
+if [[ -z "$identity" ]]; then
+  prior=""
+  if [[ -e "$reference" ]]; then
+    prior="$(codesign -dvv "$reference" 2>&1 | awk -F= '/^Authority=/{print substr($0,index($0,"=")+1); exit}' || true)"
+  fi
+  available="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+  if [[ -n "$prior" && "$available" == *"\"$prior\""* ]]; then
+    identity="$prior"
+  else
+    identity="$(printf '%s\n' "$available" | awk -F'"' '/Apple Development:/ {print $2; exit}')"
+    identity="${identity:--}"
+  fi
+fi
+codesign --force --deep --sign "$identity" --timestamp=none "$app"
+codesign --verify --deep --strict "$app"
+mkdir -p "$(dirname "$output")"
+mv "$app" "$output"

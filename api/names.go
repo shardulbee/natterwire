@@ -12,6 +12,13 @@ import (
 
 type names map[string]string
 
+func (d *database) contactName(handle string) string {
+	if d.nativeName != nil {
+		return d.nativeName(handle)
+	}
+	return d.names.lookup(handle)
+}
+
 func phoneKeys(handle string) []string {
 	digits := strings.Map(func(r rune) rune {
 		if unicode.IsDigit(r) {
@@ -50,8 +57,12 @@ func loadNames(path string) (names, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseNames(b)
+}
+
+func parseNames(b []byte) (names, error) {
 	var raw map[string]string
-	if err = json.Unmarshal(b, &raw); err != nil {
+	if err := json.Unmarshal(b, &raw); err != nil {
 		return nil, err
 	}
 	n := names{}

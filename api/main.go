@@ -115,7 +115,7 @@ func main() {
 	}
 	dbPath := flag.String("db", path, "Messages SQLite database (opened read-only)")
 	port := flag.Int("port", 8741, "loopback HTTP port")
-	contacts := flag.String("contacts", "~/.config/natterwire/contacts.json", "handle-to-name JSON dictionary; empty disables")
+	contacts := flag.String("contacts", "", "handle-to-name JSON override; empty disables; default uses macOS Contacts")
 	pinsPath := flag.String("pins", "~/Library/Preferences/com.apple.messages.pinning.plist", "Messages pinning plist; empty disables")
 	flag.Parse()
 	if flag.NArg() != 0 || *port < 1 || *port > 65535 {
@@ -136,7 +136,7 @@ func main() {
 	var err error
 	if *contacts != "" {
 		n, err = loadNames(*contacts)
-		if err != nil && (contactsSet || !errors.Is(err, os.ErrNotExist)) {
+		if err != nil {
 			log.Fatalf("contacts: %v", err)
 		}
 	}
@@ -153,9 +153,12 @@ func main() {
 	}
 	d, err := openDatabase(*dbPath, n, pins)
 	if err != nil {
-		log.Fatalf("cannot open Messages database: %v. On macOS grant Full Disk Access to this executable or its responsible launcher, then restart; the old Swift app's grant does not transfer", err)
+		log.Fatalf("cannot open Messages database: %v. On macOS grant Full Disk Access to Natterwire.app, then restart; prior grants may not transfer", err)
 	}
 	defer d.db.Close()
+	if !contactsSet {
+		d.nativeName = nativeContacts()
+	}
 	server := &http.Server{Addr: fmt.Sprintf("127.0.0.1:%d", *port), Handler: d, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, WriteTimeout: 60 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

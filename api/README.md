@@ -1,6 +1,6 @@
 # Natterwire API
 
-Standalone Go HTTP service using pure-Go SQLite. No C compiler or Apple framework is required to build or run it. The [TUI](../tui/README.md) uses the same API on Linux and macOS.
+Go HTTP service using pure-Go SQLite. The macOS build uses cgo for its native Contacts bridge; Linux remains a `CGO_ENABLED=0` build with no Contacts integration. The [TUI](../tui/README.md) uses the same API on both platforms.
 
 ## Build and run
 
@@ -31,11 +31,11 @@ The fixture refuses to overwrite an existing file. It includes archived text, du
 
 ## macOS installation and migration
 
-Run `scripts/install.sh` from an interactive terminal. It builds both Go binaries in `~/.local/bin`, signs the API, and replaces the per-user `com.shardul.natterwire` LaunchAgent. It tries to reuse an available signing identity from the prior installation. `--sign IDENTITY` selects one explicitly; `--adhoc` uses ad-hoc signing. Ad-hoc rebuilds can require granting access again. No Xcode/Swift build is involved, but macOS signing tools must be available.
+Run `scripts/install.sh` from an interactive terminal. It builds and signs `~/Applications/Natterwire.app`, links `~/.local/bin/natterwire-api` to the app's only executable, installs the TUI, and replaces the per-user LaunchAgent. It tries to reuse the prior Apple Development identity; `--sign IDENTITY` selects one and `--adhoc` uses ad-hoc signing. No Swift app is built. An unrecognized old app is moved once to `~/Applications/Natterwire.app.pre-go`, never silently deleted.
 
-Quit a manually launched old menu-bar app before installing so it releases port 8741. The installer stops the old LaunchAgent, but retains `~/Applications/Natterwire.app` for rollback. Do not reopen it while the Go service is running. Once the Go API works, the old app can be removed manually.
+Quit any old menu-bar app before installing so it releases port 8741. Do not reopen the retained backup while the Go service is running.
 
-In System Settings → Privacy & Security → Full Disk Access, add the installed `~/.local/bin/natterwire-api`. Use Shift+Command+G in the file picker to enter the hidden directory. Restart the LaunchAgent after changing access:
+In System Settings → Privacy & Security → Full Disk Access, add `~/Applications/Natterwire.app`. Restart the LaunchAgent after changing access:
 
 ```sh
 launchctl kickstart -k gui/$(id -u)/com.shardul.natterwire
@@ -44,24 +44,15 @@ tail -n 20 ~/Library/Logs/natterwire/stderr.log
 curl -fsS 'http://127.0.0.1:8741/chats?limit=1' >/dev/null
 ```
 
-A registered LaunchAgent is not proof that it can read Messages. Check the HTTP response and logs. Full Disk Access is tied to macOS TCC's executable identity and responsible launcher. A successful run from a terminal granted Full Disk Access does not prove a LaunchAgent has access. The old Swift app's grant does not transfer, even if the signing certificate is reused. If direct execution is denied, grant the terminal application access and restart it. If only launchd fails, re-add the installed binary and verify from launchd again. Do not grant blanket access to a shell or disable TCC to work around this.
+A registered LaunchAgent is not proof that it can read Messages. Check the HTTP response and logs. Full Disk Access is tied to macOS TCC's executable identity and responsible launcher. A successful run from a terminal granted Full Disk Access does not prove a LaunchAgent has access. Prior grants may not transfer, even if the signing certificate is reused. If launchd fails, re-add the installed app and verify from launchd again. Do not grant blanket access to a shell or disable TCC to work around this.
 
-`launchctl bootout gui/$(id -u)/com.shardul.natterwire` stops the service until the next login or bootstrap. Crashes retry after launchd's throttle interval. `scripts/uninstall.sh` removes the Go binaries and LaunchAgent; `--purge` also removes logs. Contacts exports and the old app remain untouched. The installer does not change Tailscale configuration.
+`launchctl bootout gui/$(id -u)/com.shardul.natterwire` stops the service until the next login or bootstrap. Crashes retry after launchd's throttle interval. `scripts/uninstall.sh` removes only a recognized Go app, command links, and LaunchAgent; `--purge` also removes logs. It retains the pre-Go backup. The installer does not change Tailscale or privacy settings.
 
 ## Contacts and pins
 
-The API loads a handle-to-name JSON dictionary once at startup, by default `~/.config/natterwire/contacts.json`. A missing default file means raw handles. Explicit `--contacts PATH` errors fail startup; `--contacts ''` disables names. Emails are case-insensitive, phones use normalized digits and the previous last-ten-digit fallback. Ambiguous phone suffixes still use one matching contact, so full international numbers are preferable.
+On macOS, the native Contacts bridge requests permission on first use and updates the in-memory name map when Contacts changes. No contact export is written. An explicit `--contacts PATH` overrides native Contacts with a JSON dictionary; `--contacts ''` disables names. Linux has no native default, but accepts the same explicit JSON file. Emails are case-insensitive and phone matching uses normalized digits with a last-ten-digit fallback.
 
-On macOS, export Contacts interactively with the small JXA adapter:
-
-```sh
-umask 077
-mkdir -p ~/.config/natterwire
-osascript -l JavaScript scripts/export-contacts.js > ~/.config/natterwire/contacts.json.tmp &&
-  mv ~/.config/natterwire/contacts.json.tmp ~/.config/natterwire/contacts.json
-```
-
-macOS may request permission for the terminal to automate Contacts. This is separate from Messages Full Disk Access. The export contains private names, emails, and phone numbers; do not commit or upload it. Restart the API to load it. Re-export after changing contacts. Linux tests use fake dictionaries with the same shape. Unlike the old app, the service does not request Contacts permission or fetch Contacts itself.
+Native access requires the app bundle's Contacts usage description. Bare command-line builds fall back to raw handles. Declining Contacts permission does not stop the API; granting or revoking access updates names on subsequent lookups. Contacts setup starts after the Messages database opens, so grant Full Disk Access first.
 
 Pins load once from `~/Library/Preferences/com.apple.messages.pinning.plist`, using `pD.pP`. Both binary and XML plists work. `--pins PATH` overrides it; `--pins ''` disables it. Missing or inaccessible default preferences fall back to activity order. Restart after changing pins.
 

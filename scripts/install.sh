@@ -15,29 +15,38 @@ umask 077
 mkdir -p "$bin"
 stage="$(mktemp -d "$bin/.natterwire.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
-CGO_ENABLED=0 go -C "$root/api" build -trimpath -o "$stage/natterwire-api" .
 CGO_ENABLED=0 go -C "$root/tui" build -trimpath -o "$stage/natterwire-tui" .
 
 if [[ "$(uname -s)" == Darwin ]]; then
-  # Reuse a real signing identity when available, but never assume its TCC grants
-  # carry from the former app bundle to this standalone executable.
-  if [[ -z "$identity" ]]; then
-    installed="$bin/natterwire-api"
-    [[ -f "$installed" ]] || installed="$HOME/Applications/Natterwire.app"
-    prior="$(codesign -dvv "$installed" 2>&1 | awk -F= '/^Authority=/{print substr($0,index($0,"=")+1); exit}' || true)"
-    available="$(security find-identity -v -p codesigning 2>/dev/null || true)"
-    if [[ -n "$prior" && "$available" == *"\"$prior\""* ]]; then
-      identity="$prior"
-    else
-      identity="$(printf '%s\n' "$available" | awk -F'"' '/Apple Development:/ {print $2; exit}')"
-      identity="${identity:--}"
-    fi
+  apps="$HOME/Applications"
+  installed="$apps/Natterwire.app"
+  built="$stage/Natterwire.app"
+  build_args=(--output "$built" --reference "$installed")
+  [[ -z "$identity" ]] || build_args+=(--sign "$identity")
+  "$root/scripts/build-app" "${build_args[@]}"
+
+  mkdir -p "$apps"
+  known=false
+  if [[ -f "$installed/Contents/Info.plist" && -x "$installed/Contents/MacOS/natterwire-api" ]]; then
+    [[ "$(plutil -extract CFBundleIdentifier raw -o - "$installed/Contents/Info.plist" 2>/dev/null || true)" == com.shardul.natterwire.api ]] && known=true
   fi
-  codesign --force --sign "$identity" --identifier com.shardul.natterwire.api --timestamp=none "$stage/natterwire-api"
-  codesign --verify --strict "$stage/natterwire-api"
+  if [[ -e "$installed" && "$known" == false && ! -e "$apps/Natterwire.app.pre-go" ]]; then
+    mv "$installed" "$apps/Natterwire.app.pre-go"
+    echo "Backed up the previous app to $apps/Natterwire.app.pre-go"
+  elif [[ -e "$installed" && "$known" == false ]]; then
+    echo "Refusing to replace an unrecognized $installed: backup already exists" >&2
+    exit 1
+  elif [[ -e "$installed" ]]; then
+    rm -rf "$stage/previous.app"
+    mv "$installed" "$stage/previous.app"
+  fi
+  mv "$built" "$installed"
+  ln -sfn "$installed/Contents/MacOS/natterwire-api" "$bin/natterwire-api"
+else
+  CGO_ENABLED=0 go -C "$root/api" build -trimpath -o "$stage/natterwire-api" .
+  mv -f "$stage/natterwire-api" "$bin/natterwire-api"
 fi
 
-mv -f "$stage/natterwire-api" "$bin/natterwire-api"
 mv -f "$stage/natterwire-tui" "$bin/natterwire-tui"
 
 if [[ "$(uname -s)" == Darwin ]]; then
@@ -47,10 +56,10 @@ if [[ "$(uname -s)" == Darwin ]]; then
   plist="$HOME/Library/LaunchAgents/$label.plist"
   mkdir -p "$logs" "$(dirname "$plist")"
   chmod 700 "$logs"
-  # plutil escapes paths as plist strings, including spaces and XML characters.
   cp "$root/launchd/$label.plist" "$stage/agent.plist"
-  # plutil -replace can insert instead of replacing array element zero on macOS.
-  /usr/libexec/PlistBuddy -c "Set :ProgramArguments:0 $bin/natterwire-api" "$stage/agent.plist"
+  # Separate plutil arguments preserve spaces, quotes, and XML metacharacters.
+  plutil -remove ProgramArguments.0 "$stage/agent.plist"
+  plutil -insert ProgramArguments.0 -string "$HOME/Applications/Natterwire.app/Contents/MacOS/natterwire-api" "$stage/agent.plist"
   plutil -replace StandardOutPath -string "$logs/stdout.log" "$stage/agent.plist"
   plutil -replace StandardErrorPath -string "$logs/stderr.log" "$stage/agent.plist"
   plutil -lint "$stage/agent.plist" >/dev/null
@@ -59,7 +68,6 @@ if [[ "$(uname -s)" == Darwin ]]; then
   launchctl bootstrap "$domain" "$plist"
   launchctl print "$domain/$label" >/dev/null
   echo "LaunchAgent registered. Check $logs/stderr.log and the API before assuming it is running."
-  echo "Grant Full Disk Access to $bin/natterwire-api, then restart the LaunchAgent."
-  echo "The old Swift app's permission does not transfer. See api/README.md."
+  echo "Grant Full Disk Access to Natterwire.app if needed, then restart the LaunchAgent."
 fi
-echo "Installed $bin/natterwire-api and $bin/natterwire-tui"
+echo "Installed Natterwire API and $bin/natterwire-tui"
