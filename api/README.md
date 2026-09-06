@@ -35,7 +35,7 @@ Run `scripts/install.sh` from an interactive terminal. It builds and signs `~/Ap
 
 Quit Natterwire before installing or updating so it releases port 8741, then open `Natterwire.app` from Finder. Quit the app to stop the API and reopen it to start again. Do not open the retained backup while Natterwire is running.
 
-The app lives in the menu bar with a monochrome fox icon and no Dock icon. Its window shows separate access checkmarks for Messages and Contacts and stays open until you dismiss it. Closing the window keeps the API running; clicking the menu bar fox reopens it. Click Quit Natterwire in the window or press ⌘Q while it is focused to stop the app and API.
+The app lives in the menu bar with a monochrome fox icon and no Dock icon. Its window shows separate access checkmarks for Messages and Contacts and stays open until you dismiss it. Closing the window keeps the API running. Click the menu bar fox and choose Open Natterwire to reopen the window, or Quit Natterwire to stop the app and API. ⌘Q also quits while the window is focused.
 
 The app guides you to System Settings when Full Disk Access is missing and requests Contacts access. Add `~/Applications/Natterwire.app` under Privacy & Security → Full Disk Access. The app retries the Messages database every two seconds, so leave it open after granting access. If macOS itself asks you to Quit & Reopen, use that normal app action; no service commands are needed. Declining Contacts access only leaves names unresolved.
 

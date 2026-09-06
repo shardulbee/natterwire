@@ -43,15 +43,15 @@ func nativeApplication(run func(context.Context, func()) error) bool {
 		defer close(done)
 		for ctx.Err() == nil {
 			err := run(ctx, func() {
-				update("Ready", "Read your messages in the terminal client. Contacts access is optional.", 1)
+				update("Natterwire", "", 1)
 			})
 			if ctx.Err() != nil {
 				return
 			}
 			if errors.Is(err, errMessagesAccess) {
-				update("Allow Messages access", "Enable Natterwire in Full Disk Access. Contacts access is optional.", 0)
+				update("Allow Messages access", "Enable Natterwire in Full Disk Access using Settings below.", 0)
 			} else {
-				update("API unavailable", "Natterwire will retry automatically. Contacts access is optional.", 1)
+				update("API unavailable", "Natterwire will retry automatically.", 1)
 			}
 			select {
 			case <-ctx.Done():
