@@ -74,6 +74,29 @@ func TestHTTPAndControls(t *testing.T) {
 	}
 }
 
+func TestOversizedPageRetriesWithoutSkippingMessages(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		requests = append(requests, q.Get("limit")+":"+q.Get("before"))
+		if q.Get("before") == "older" {
+			fmt.Fprint(w, `{"items":[{"id":"1"}],"nextBefore":null}`)
+		} else if q.Get("limit") == "50" {
+			fmt.Fprint(w, strings.Repeat(" ", (64<<20)+1))
+		} else {
+			fmt.Fprint(w, `{"items":[{"id":"2"}],"nextBefore":"older"}`)
+		}
+	}))
+	defer server.Close()
+	p, err := load(context.Background(), server.Client(), server.URL, request{chat: "alex", before: "start", head: "1"}, false)
+	if err != nil || len(p.Items) != 2 || p.Items[0].ID != "2" || p.Items[1].ID != "1" || p.NextBefore != "" {
+		t.Fatalf("retry lost history: %+v %v", p, err)
+	}
+	if !slices.Equal(requests, []string{"50:start", "25:start", "50:older"}) {
+		t.Fatalf("retry changed cursor or failed to follow pagination: %v", requests)
+	}
+}
+
 func TestPaginationMustAdvance(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"items":[{"id":"2","text":"new"}],"nextBefore":"stuck"}`)

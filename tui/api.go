@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -105,7 +107,28 @@ func clean(s string, multiline bool) string {
 	}, s)
 }
 
+var errPageTooLarge = errors.New("API page exceeds 64 MiB")
+
 func getPage(ctx context.Context, client *http.Client, target string) (page, error) {
+	for {
+		p, err := getPageOnce(ctx, client, target)
+		if !errors.Is(err, errPageTooLarge) {
+			return p, err
+		}
+		// Keep the cursor and full image data; ask for fewer messages instead.
+		u, _ := url.Parse(target) // The HTTP request already validated this URL.
+		q := u.Query()
+		count, _ := strconv.Atoi(q.Get("limit"))
+		if count <= 1 {
+			return page{}, err
+		}
+		q.Set("limit", strconv.Itoa(count/2))
+		u.RawQuery = q.Encode()
+		target = u.String()
+	}
+}
+
+func getPageOnce(ctx context.Context, client *http.Client, target string) (page, error) {
 	r, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return page{}, err
@@ -123,8 +146,11 @@ func getPage(ctx context.Context, client *http.Client, target string) (page, err
 	if err != nil {
 		return page{}, err
 	}
+	if len(data) > limit {
+		return page{}, errPageTooLarge
+	}
 	var p page
-	if len(data) > limit || json.Unmarshal(data, &p) != nil || p.Items == nil {
+	if json.Unmarshal(data, &p) != nil || p.Items == nil {
 		return page{}, fmt.Errorf("invalid API page")
 	}
 	for i := range p.Items {

@@ -73,6 +73,9 @@ public final class HTTPServer: @unchecked Sendable {
     }
 
     private func handle(_ client: Int32) {
+        // A client may cancel a large media response. Return EPIPE, not process-wide SIGPIPE.
+        var noSigPipe: Int32 = 1
+        guard setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout.size(ofValue: noSigPipe))) == 0 else { return }
         var timeout = timeval(tv_sec: 5, tv_usec: 0)
         setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout)))
         var data = Data()
