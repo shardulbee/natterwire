@@ -49,7 +49,8 @@ if [[ "$(uname -s)" == Darwin ]]; then
   chmod 700 "$logs"
   # plutil escapes paths as plist strings, including spaces and XML characters.
   cp "$root/launchd/$label.plist" "$stage/agent.plist"
-  plutil -replace ProgramArguments.0 -string "$bin/natterwire-api" "$stage/agent.plist"
+  # plutil -replace can insert instead of replacing array element zero on macOS.
+  /usr/libexec/PlistBuddy -c "Set :ProgramArguments:0 $bin/natterwire-api" "$stage/agent.plist"
   plutil -replace StandardOutPath -string "$logs/stdout.log" "$stage/agent.plist"
   plutil -replace StandardErrorPath -string "$logs/stderr.log" "$stage/agent.plist"
   plutil -lint "$stage/agent.plist" >/dev/null
