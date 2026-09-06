@@ -16,6 +16,15 @@ import (
 type item struct {
 	ID, DisplayName, Text, SentAt, Sender string
 	IsFromMe                              bool
+	Attachments                           []attachment
+}
+
+func equalItem(a, b item) bool {
+	return a.ID == b.ID && a.DisplayName == b.DisplayName && a.Text == b.Text &&
+		a.SentAt == b.SentAt && a.Sender == b.Sender && a.IsFromMe == b.IsFromMe &&
+		slices.EqualFunc(a.Attachments, b.Attachments, func(a, b attachment) bool {
+			return a.ID == b.ID && a.Filename == b.Filename && a.MimeType == b.MimeType && a.DataBase64 == b.DataBase64
+		})
 }
 
 type page struct {
@@ -26,7 +35,7 @@ type page struct {
 // merge retains loaded history below the refreshed head, or appends an older page.
 // An unchanged poll keeps the existing slice and its prepared transcript layout.
 func (p *page) merge(next page, older bool) bool {
-	if !older && next.NextBefore != "" && len(next.Items) <= len(p.Items) && slices.Equal(p.Items[:len(next.Items)], next.Items) {
+	if !older && next.NextBefore != "" && len(next.Items) <= len(p.Items) && slices.EqualFunc(p.Items[:len(next.Items)], next.Items, equalItem) {
 		return false
 	}
 	index := make(map[string]int, len(p.Items))
@@ -54,7 +63,7 @@ func (p *page) merge(next page, older bool) bool {
 		next.Items = append(next.Items, p.Items[tail:]...)
 		next.NextBefore = p.NextBefore
 	}
-	changed := !slices.Equal(p.Items, next.Items)
+	changed := !slices.EqualFunc(p.Items, next.Items, equalItem)
 	if changed {
 		p.Items = next.Items
 	}
@@ -109,7 +118,7 @@ func getPage(ctx context.Context, client *http.Client, target string) (page, err
 	if res.StatusCode != http.StatusOK {
 		return page{}, fmt.Errorf("HTTP %d", res.StatusCode)
 	}
-	const limit = 8 << 20
+	const limit = 64 << 20 // Base64 media pages can exceed the former text-only 8 MiB limit.
 	data, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
 	if err != nil {
 		return page{}, err
@@ -125,6 +134,11 @@ func getPage(ctx context.Context, client *http.Client, target string) (page, err
 		}
 		m.DisplayName, m.Sender = clean(m.DisplayName, false), clean(m.Sender, false)
 		m.Text, m.SentAt = clean(m.Text, true), clean(m.SentAt, false)
+		for j := range m.Attachments {
+			a := &m.Attachments[j]
+			a.Filename, a.MimeType = clean(a.Filename, false), clean(a.MimeType, false)
+			a.preview = decodePreview(*a)
+		}
 	}
 	return p, nil
 }

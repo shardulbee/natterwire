@@ -76,6 +76,7 @@ class Terminal:
         self.recording = bytearray()
         self.width_mode = width_mode
         self.query_tail = b""
+        self.render_tail = ""
         self.probe_column = 0
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
@@ -121,7 +122,14 @@ class Terminal:
                 elif seq in (b"\x1b[c", b"\x1b[0c"):
                     os.write(self.fd, b"\x1b[?1;2c")
             self.query_tail = queries[consumed:][-32:]
-            self.stream.feed(self.decoder.decode(data))
+            # Pyte lacks colon-form SGR colors; normalize only its input, not the recording.
+            rendered = self.render_tail + self.decoder.decode(data)
+            partial = re.search(r"\x1b(?:\[[0-?]*[ -/]*)?$", rendered)
+            self.render_tail = rendered[partial.start():] if partial else ""
+            if partial:
+                rendered = rendered[:partial.start()]
+            rendered = re.sub(r"\x1b\[([0-9:;]*)m", lambda m: "\x1b[" + m[1].replace("::", ":").replace(":", ";") + "m", rendered)
+            self.stream.feed(rendered)
 
     def text(self):
         return "\n".join(self.screen.display)
@@ -152,7 +160,7 @@ class Terminal:
             for x in range(self.screen.columns):
                 cell = self.screen.buffer[y][x]
                 fg = colors.get(cell.fg, "#" + cell.fg if len(cell.fg) == 6 else "#d6d9df")
-                bg = "#151719" if cell.bg == "default" else colors.get(cell.bg, "#151719")
+                bg = "#151719" if cell.bg == "default" else colors.get(cell.bg, "#" + cell.bg if len(cell.bg) == 6 else "#151719")
                 if cell.reverse:
                     fg, bg = bg, fg
                 draw.rectangle((16 + x*cw, 16 + y*ch, 16 + (x+1)*cw, 16 + (y+1)*ch), fill=bg)

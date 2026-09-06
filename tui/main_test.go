@@ -56,7 +56,7 @@ func TestHTTPAndControls(t *testing.T) {
 		case "/invalid":
 			fmt.Fprint(w, `{}`)
 		case "/oversized":
-			fmt.Fprint(w, strings.Repeat(" ", (8<<20)+1))
+			fmt.Fprint(w, strings.Repeat(" ", (64<<20)+1))
 		default:
 			http.Error(w, "offline", 503)
 		}
@@ -89,7 +89,7 @@ func TestModesCacheAndStaleResponses(t *testing.T) {
 	a.accept(response{page: demoPage("")})
 	a.accept(response{request: request{chat: "alex"}, page: demoPage("alex")})
 	c := a.current()
-	c.prepare(c.Items, 40, 5, unicodeWidth)
+	c.prepare(c.Items, 40, 5, unicodeWidth, &vaxis.Vaxis{})
 	rows := &c.rows[0]
 	a.accept(response{request: request{chat: "alex"}, page: demoPage("alex")})
 	if c.dirty {
@@ -114,7 +114,7 @@ func TestModesCacheAndStaleResponses(t *testing.T) {
 	}
 	a.key(vaxis.Key{Keycode: 'h'})
 	a.key(vaxis.Key{Keycode: 'k'})
-	c.prepare(c.Items, 40, 5, unicodeWidth)
+	c.prepare(c.Items, 40, 5, unicodeWidth, &vaxis.Vaxis{})
 	if a.current() != c || &c.rows[0] != rows || !c.following {
 		t.Fatal("warm switch lost cache or bottom position")
 	}
@@ -145,7 +145,7 @@ func TestLayoutAnchorAndEmoji(t *testing.T) {
 		messages = append(messages, item{ID: fmt.Sprint(i), Text: "1234567890❤️ 👩‍👩‍👧‍👦", Sender: "Contact Name"})
 	}
 	l := layout{dirty: true, following: true}
-	l.prepare(messages, 12, 5, unicodeWidth)
+	l.prepare(messages, 12, 5, unicodeWidth, &vaxis.Vaxis{})
 	if l.rows[1].text != "1234567890❤️" || !strings.HasPrefix(l.rows[0].text, "Contact Name") {
 		t.Fatal("split emoji or lost sender name")
 	}
@@ -158,11 +158,11 @@ func TestLayoutAnchorAndEmoji(t *testing.T) {
 	anchor := l.rows[l.top]
 	messages = append([]item{{ID: "16", Text: "new"}}, messages...)
 	l.dirty = true
-	l.prepare(messages, 12, 5, unicodeWidth)
+	l.prepare(messages, 12, 5, unicodeWidth, &vaxis.Vaxis{})
 	if l.rows[l.top] != anchor || l.newMessages != 1 {
 		t.Fatal("refresh moved reading position or lost count")
 	}
-	l.prepare(messages, 10, 5, unicodeWidth)
+	l.prepare(messages, 10, 5, unicodeWidth, &vaxis.Vaxis{})
 	if l.rows[l.top].id != anchor.id || l.rows[l.top].offset > anchor.offset || l.newMessages != 1 {
 		t.Fatal("resize lost anchor or counted twice")
 	}
@@ -205,9 +205,9 @@ func TestWorkerCancellationAndCoalescing(t *testing.T) {
 func BenchmarkWarmLayout(b *testing.B) {
 	messages := slices.Repeat(demoPage("alex").Items, 1000)
 	l := layout{dirty: true, following: true}
-	l.prepare(messages, 100, 50, unicodeWidth)
+	l.prepare(messages, 100, 50, unicodeWidth, &vaxis.Vaxis{})
 	b.ResetTimer()
 	for b.Loop() {
-		l.prepare(messages, 100, 50, unicodeWidth)
+		l.prepare(messages, 100, 50, unicodeWidth, &vaxis.Vaxis{})
 	}
 }

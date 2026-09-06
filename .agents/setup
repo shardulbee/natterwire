@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v go >/dev/null; then
+  archive=$(mktemp)
+  trap 'rm -f "$archive"' EXIT
+  curl -fsSL https://go.dev/dl/go1.25.0.linux-amd64.tar.gz -o "$archive"
+  sudo tar -C /usr/local -xzf "$archive"
+  sudo ln -sf /usr/local/go/bin/go /usr/local/bin/go
+  sudo ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+fi
+go -C tui mod download
+python3 -m venv tui/.venv
+tui/.venv/bin/pip install -q pyte pillow

@@ -7,3 +7,4 @@ dist/
 tui/bin/
 tui/.venv/
 tui/tests/__pycache__/
+.amp/portals/

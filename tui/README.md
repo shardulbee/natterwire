@@ -34,6 +34,8 @@ Use `GOARCH=arm64` and a different output directory for ARM Linux.
 
 Requires at least 60 columns by 14 rows. Arrow keys also work. Color indicates focus; `>` marks the open chat. Selecting a chat displays its cached transcript immediately while refreshing in the background; uncached chats need an initial fetch. Switching chats resets to the bottom; drafts survive switches within the running session. The empty composer stays hidden until insert mode.
 
+Image attachments render inline as colored half-block previews, up to 48 columns by 12 rows, and scroll with the transcript. PNG, JPEG, GIF (first frame), and WebP are supported; HEIC and other unsupported, missing, or oversized images show a filename instead. Decoding is limited to 10 MiB and 32 megapixels per image, with a 64 MiB API page limit. `NO_COLOR` keeps attachment labels without previews. Requires the Mac API's `attachments` fields.
+
 ## Refresh behavior
 
 Background requests refresh every 30 seconds and when opening a chat. Messages and wrapped rows stay cached per conversation for immediate reopening; unchanged polls do not rewrap. Network requests never block input. Failed requests keep cached content. While reading earlier messages, refresh preserves the visible message and shows a new-message count. No streaming or notifications.
@@ -50,6 +52,7 @@ go vet ./...
 python3 -m venv .venv
 .venv/bin/pip install pyte pillow
 .venv/bin/python tests/smoke.py bin/natterwire-tui
+.venv/bin/python tests/images.py bin/natterwire-tui
 .venv/bin/python tests/latency.py bin/natterwire-tui
 ```
 

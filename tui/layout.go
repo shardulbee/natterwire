@@ -31,6 +31,8 @@ type row struct {
 	text, id string
 	offset   int
 	style    vaxis.Style
+	image    *vaxis.HalfBlockImage
+	imageRow int
 }
 
 type layout struct {
@@ -54,7 +56,7 @@ func (l *layout) scroll(n int) {
 }
 
 // Byte offsets keep the same message text visible when new pages arrive or width changes.
-func (l *layout) prepare(messages []item, width, height int, measure func(string) int) {
+func (l *layout) prepare(messages []item, width, height int, measure func(string) int, vx *vaxis.Vaxis) {
 	if l.dirty || l.width != width {
 		anchor := row{}
 		if !l.following && l.top < len(l.rows) {
@@ -86,9 +88,12 @@ func (l *layout) prepare(messages []item, width, height int, measure func(string
 			if len(date) >= 16 && date[10] == 'T' {
 				date = date[:10] + " " + date[11:16]
 			}
-			l.rows = append(l.rows, row{name + "  " + date, m.ID, 0, headerStyle})
+			l.rows = append(l.rows, row{text: name + "  " + date, id: m.ID, style: headerStyle})
 			text := m.Text
-			if text == "" {
+			if len(m.Attachments) > 0 {
+				text = strings.ReplaceAll(text, "\ufffc", "")
+			}
+			if text == "" && len(m.Attachments) == 0 {
 				text = "[Attachment or unavailable message text]"
 			}
 			for start := 0; start < len(text); {
@@ -113,10 +118,24 @@ func (l *layout) prepare(messages []item, width, height int, measure func(string
 					end += len(ch.Grapheme)
 					next, col = end, col+w
 				}
-				l.rows = append(l.rows, row{text[start:end], m.ID, start + 1, vaxis.Style{}})
+				l.rows = append(l.rows, row{text: text[start:end], id: m.ID, offset: start + 1})
 				start = next
 			}
-			l.rows = append(l.rows, row{"", m.ID, len(text) + 1, vaxis.Style{}})
+			offset := len(text) + 1
+			for _, a := range m.Attachments {
+				l.rows = append(l.rows, row{text: a.label(), id: m.ID, offset: offset, style: muted})
+				offset++
+				if a.preview != nil && os.Getenv("NO_COLOR") == "" {
+					preview := vx.NewHalfBlockImage(a.preview)
+					preview.Resize(min(width, 48), 12)
+					_, h := preview.CellSize()
+					for y := 0; y < h; y++ {
+						l.rows = append(l.rows, row{id: m.ID, offset: offset, image: preview, imageRow: y})
+						offset++
+					}
+				}
+			}
+			l.rows = append(l.rows, row{id: m.ID, offset: offset})
 		}
 		if anchor.id != "" {
 			for i, r := range l.rows {
@@ -207,10 +226,18 @@ func (a *app) draw(vx *vaxis.Vaxis, measure func(string) int) {
 		if showDraft {
 			historyHeight -= 4
 		}
-		c.prepare(c.Items, cw, historyHeight, measure)
+		c.prepare(c.Items, cw, historyHeight, measure, vx)
+		history := content.New(0, 2, cw, historyHeight)
 		for i := c.top; i < min(len(c.rows), c.top+historyHeight); i++ {
 			r := c.rows[i]
-			line(content, 2+i-c.top, r.text, r.style, measure)
+			if r.image != nil {
+				if r.imageRow == 0 || i == c.top {
+					w, h := r.image.CellSize()
+					r.image.Draw(history.New(0, i-c.top-r.imageRow, w, h))
+				}
+			} else {
+				line(history, i-c.top, r.text, r.style, measure)
+			}
 		}
 		if len(c.Items) == 0 {
 			text := "No messages. Press r to refresh."
