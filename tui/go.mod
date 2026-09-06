@@ -2,6 +2,8 @@ module github.com/shardulbee/natterwire/tui
 
 go 1.25.0
 
+replace go.rockorager.dev/vaxis => ./third_party/vaxis
+
 require (
 	go.rockorager.dev/vaxis v0.17.1
 	golang.org/x/image v0.30.0
