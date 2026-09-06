@@ -34,7 +34,9 @@ Use `GOARCH=arm64` and a different output directory for ARM Linux.
 
 Requires at least 60 columns by 14 rows. Focus stays on the sidebar except while composing. Up/Down switch chats; PageUp/PageDown scroll transcript half-pages; End jumps to latest. Color indicates focus; `>` marks the open chat. Selecting a chat displays its cached transcript immediately while refreshing in the background; uncached chats need an initial fetch. Switching chats resets to the bottom; drafts survive switches within the running session. The empty composer stays hidden until insert mode.
 
-Images display through the Kitty graphics protocol when supported, fitted to the available chat area with their aspect ratio preserved. There is no fixed thumbnail resolution or colored-block renderer. Other terminals show only `[Image: filename]`. PNG, JPEG, GIF (first frame), WebP, and HEIC are supported; the Mac supplies a full-resolution, orientation-correct JPEG for HEIC in `displayDataBase64` while preserving the original file in `dataBase64`. Missing or undecodable images keep their filename label. The decoder rejects images over 32 megapixels; API pages are limited to 64 MiB.
+Images display through Kitty graphics, fitted to the chat area without fixed thumbnails or colored blocks. Other terminals show `[Image: filename]` and fetch no media. The TUI requests metadata-only message pages and loads visible images plus nearby rows on a separate worker. PNG, JPEG, GIF (first frame), WebP, and HEIC are supported; the binary attachment endpoint supplies full-resolution oriented JPEG for HEIC. This requires the metadata/binary API. The decoder rejects images over 32 megapixels.
+
+Decoded sources have a 128 MiB cache budget; fitted pixels plus terminal copies have a 64 MiB budget. Scrolling changes placements, not uploaded pixels. The small local Vaxis crop patch is documented in [third_party/VAXIS.md](third_party/VAXIS.md).
 
 ## Refresh behavior
 

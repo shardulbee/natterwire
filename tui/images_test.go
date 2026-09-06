@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"image"
 	"image/color"
@@ -24,7 +23,7 @@ func TestImagePageAndRefresh(t *testing.T) {
 	if err := png.Encode(&buf, img); err != nil {
 		t.Fatal(err)
 	}
-	a := attachment{ID: "image", Filename: "photo\n.png", MimeType: "image/png", DataBase64: base64.StdEncoding.EncodeToString(buf.Bytes())}
+	a := attachment{ID: "image", Filename: "photo\n.png", MimeType: "image/png", MediaID: "image", Version: "1", Width: 96, Height: 48}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(page{Items: []item{{ID: "1", Text: "\ufffc", Attachments: []attachment{a}}}})
 	}))
@@ -33,18 +32,19 @@ func TestImagePageAndRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	preview := p.Items[0].Attachments[0]
-	if preview.Filename != "photo .png" || preview.preview == nil || preview.preview.Bounds().Size() != image.Pt(96, 48) {
-		t.Fatalf("missing or oversized thumbnail: %+v", preview)
+	metadata := p.Items[0].Attachments[0]
+	if metadata.Filename != "photo .png" {
+		t.Fatalf("unsafe filename: %+v", metadata)
 	}
-	if got := color.NRGBAModel.Convert(preview.preview.At(0, 0)); got != (color.NRGBA{R: 255, A: 255}) {
+	// Decoding is explicitly separate from loading the transcript.
+	if got := color.NRGBAModel.Convert(decodeImage(buf.Bytes()).At(0, 0)); got != (color.NRGBA{R: 255, A: 255}) {
 		t.Fatalf("image pixels lost: %v", got)
 	}
 	next, err := getPage(context.Background(), server.Client(), server.URL)
 	if err != nil || p.merge(next, false) {
 		t.Fatalf("unchanged media poll dirtied cache: %v", err)
 	}
-	next.Items[0].Attachments[0].DataBase64 = ""
+	next.Items[0].Attachments[0].Version = "2"
 	if !p.merge(next, false) {
 		t.Fatal("attachment-only edit was ignored")
 	}
@@ -53,14 +53,15 @@ func TestImagePageAndRefresh(t *testing.T) {
 func TestPreviewFallbacks(t *testing.T) {
 	for _, a := range []attachment{
 		{MimeType: "image/jpeg"},
-		{MimeType: "image/png", DataBase64: "not base64"},
-		{MimeType: "image/heic", DataBase64: "aGVsbG8="},
-		{MimeType: "image/png", DataBase64: strings.Repeat("A", base64.StdEncoding.EncodedLen(10<<20)+1)},
-		{MimeType: "application/pdf", DataBase64: "aGVsbG8="},
+		{MimeType: "image/heic"},
+		{MimeType: "application/pdf"},
 	} {
-		if decodePreview(a) != nil || !strings.Contains(a.label(), ": ") {
+		if !strings.Contains(a.label(), ": ") {
 			t.Errorf("missing fallback for %q", a.MimeType)
 		}
+	}
+	if decodeImage([]byte("invalid image")) != nil {
+		t.Fatal("invalid image accepted")
 	}
 }
 
@@ -69,21 +70,15 @@ func TestFullResolutionHEICDisplay(t *testing.T) {
 	if err := jpeg.Encode(&data, image.NewRGBA(image.Rect(0, 0, 2048, 1536)), nil); err != nil {
 		t.Fatal(err)
 	}
-	a := attachment{Filename: "photo.heic", MimeType: "image/heic", DataBase64: "unsupported HEIC", DisplayDataBase64: base64.StdEncoding.EncodeToString(data.Bytes())}
-	decoded := decodePreview(a)
+	decoded := decodeImage(data.Bytes())
 	if decoded == nil || decoded.Bounds().Size() != image.Pt(2048, 1536) {
 		t.Fatal("HEIC display representation was not decoded at full resolution")
-	}
-	b := a
-	b.DisplayDataBase64 = ""
-	if equalItem(item{Attachments: []attachment{a}}, item{Attachments: []attachment{b}}) {
-		t.Fatal("new HEIC display data must refresh the cache")
 	}
 }
 
 func TestImageLayout(t *testing.T) {
 	attachments := []attachment{
-		{Filename: "one.png", MimeType: "image/png", preview: image.NewNRGBA(image.Rect(0, 0, 480, 240))},
+		{Filename: "one.png", MimeType: "image/png", MediaID: "one", Width: 480, Height: 240},
 		{Filename: "two.heic", MimeType: "image/heic"},
 	}
 	messages := []item{{ID: "1", Text: "\ufffcCaption", Attachments: attachments}}
@@ -104,7 +99,7 @@ func TestImageLayout(t *testing.T) {
 		t.Fatal("refresh moved partially visible image")
 	}
 	l.prepare(messages, 20, 15, unicodeWidth, cell)
-	if p := l.rows[3].image; p.pixels.Bounds().Dx() > 20*cell.X || p.rows > 12 {
+	if p := l.rows[3].image; p.size.X > 20*cell.X || p.rows > 12 {
 		t.Fatal("resize exceeded the transcript")
 	}
 	// Capability changes must rebuild even when terminal columns are unchanged.

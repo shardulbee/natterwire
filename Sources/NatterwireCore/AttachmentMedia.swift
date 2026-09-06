@@ -82,7 +82,10 @@ final class AttachmentMedia: @unchecked Sendable {
               let type = CGImageSourceGetType(source) as String? else { throw AttachmentMediaError.notFound }
         let contentType: String
         let display: Data
-        if ["public.heic", "public.heif"].contains(type) {
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        // Match the orientation-correct dimensions advertised in metadata,
+        // including JPEG EXIF orientation which Go's image decoder ignores.
+        if ["public.heic", "public.heif"].contains(type) || (properties?[kCGImagePropertyOrientation] as? Int ?? 1) != 1 {
             guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
                   let width = properties[kCGImagePropertyPixelWidth] as? Int,
                   let height = properties[kCGImagePropertyPixelHeight] as? Int,

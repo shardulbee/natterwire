@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/base64"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
@@ -15,25 +14,13 @@ import (
 )
 
 type attachment struct {
-	ID, Filename, MimeType, DataBase64 string
-	DisplayDataBase64                  string
-	preview                            image.Image
+	ID, Filename, MimeType string
+	MediaID, Version       string
+	Width, Height          int
 }
 
-// Decode the full image on the HTTP worker, not the input loop. The Mac supplies
-// a full-resolution JPEG for HEIC; original attachment bytes remain untouched.
-func decodePreview(a attachment) image.Image {
-	encoded := a.DataBase64
-	if a.DisplayDataBase64 != "" {
-		encoded = a.DisplayDataBase64
-	}
-	if (a.MimeType != "" && !strings.HasPrefix(a.MimeType, "image/")) || len(encoded) > base64.StdEncoding.EncodedLen(64<<20) {
-		return nil
-	}
-	data, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		return nil
-	}
+// Called only on the media worker. HEIC is served as full-resolution JPEG.
+func decodeImage(data []byte) image.Image {
 	config, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil || config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 32_000_000 {
 		return nil
@@ -53,7 +40,7 @@ func (a attachment) label() string {
 	if name == "" {
 		name = "unnamed file"
 	}
-	if a.preview != nil || strings.HasPrefix(a.MimeType, "image/") || strings.HasSuffix(strings.ToLower(name), ".pluginpayloadattachment") {
+	if strings.HasPrefix(a.MimeType, "image/") || strings.HasSuffix(strings.ToLower(name), ".pluginpayloadattachment") {
 		return "[Image: " + name + "]"
 	}
 	return "[Attachment: " + name + "]"
@@ -61,11 +48,15 @@ func (a attachment) label() string {
 
 func fitImage(src image.Image, width, height int) *image.NRGBA {
 	b := src.Bounds()
-	scale := max(1, max(float64(b.Dx())/float64(width), float64(b.Dy())/float64(height)))
-	w, h := max(1, int(float64(b.Dx())/scale)), max(1, int(float64(b.Dy())/scale))
-	dst := image.NewNRGBA(image.Rect(0, 0, w, h))
+	size := fittedSize(b.Size(), image.Pt(width, height))
+	dst := image.NewNRGBA(image.Rectangle{Max: size})
 	draw.ApproxBiLinear.Scale(dst, dst.Bounds(), src, b, draw.Src, nil)
 	return dst
+}
+
+func fittedSize(src, available image.Point) image.Point {
+	scale := max(1, max(float64(src.X)/float64(max(1, available.X)), float64(src.Y)/float64(max(1, available.Y))))
+	return image.Pt(max(1, int(float64(src.X)/scale)), max(1, int(float64(src.Y)/scale)))
 }
 
 func kittyCell(vx *vaxis.Vaxis) image.Point {
@@ -81,39 +72,23 @@ func kittyCell(vx *vaxis.Vaxis) image.Point {
 }
 
 type inlineImage struct {
-	pixels *image.NRGBA
-	cell   image.Point
-	rows   int
-	crop   image.Rectangle
-	kitty  *vaxis.KittyImage
+	attachment attachment
+	size       image.Point
+	cell       image.Point
+	rows       int
 }
 
-func newInlineImage(src image.Image, width, height int, cell image.Point) *inlineImage {
-	// Fit to the available terminal area, not an arbitrary thumbnail size.
-	pixels := fitImage(src, width*cell.X, max(1, height-3)*cell.Y)
-	return &inlineImage{pixels: pixels, cell: cell, rows: (pixels.Bounds().Dy() + cell.Y - 1) / cell.Y}
+func newInlineImage(a attachment, width, height int, cell image.Point) *inlineImage {
+	// Layout only computes geometry. The media worker handles pixels.
+	size := fittedSize(image.Pt(a.Width, a.Height), image.Pt(width*cell.X, max(1, height-3)*cell.Y))
+	return &inlineImage{attachment: a, size: size, cell: cell, rows: (size.Y + cell.Y - 1) / cell.Y}
 }
 
-func (p *inlineImage) destroy(vx *vaxis.Vaxis) {
-	if p.kitty != nil {
-		vx.RemoveImage(p.kitty)
-		p.kitty.Destroy()
-		p.kitty = nil
-	}
+type imageKey struct {
+	id, version string
+	size, cell  image.Point
 }
 
-func (p *inlineImage) draw(vx *vaxis.Vaxis, win vaxis.Window, firstRow, rows int) {
-	b := p.pixels.Bounds()
-	crop := image.Rect(0, firstRow*p.cell.Y, b.Dx(), min(b.Dy(), (firstRow+rows)*p.cell.Y))
-	if p.kitty == nil || p.crop != crop {
-		p.destroy(vx)
-		// Native Kitty placements ignore Window clipping. Upload only the visible
-		// pixels, rebased to zero origin, so images cannot overlap the header/draft.
-		visible := image.NewNRGBA(image.Rect(0, 0, crop.Dx(), crop.Dy()))
-		draw.Draw(visible, visible.Bounds(), p.pixels, crop.Min, draw.Src)
-		p.kitty, p.crop = vx.NewKittyGraphic(visible), crop
-		p.kitty.Resize((crop.Dx()+p.cell.X-1)/p.cell.X, rows)
-	}
-	// Each object is resized once. Obsolete encodings are never drawn/uploaded.
-	p.kitty.Draw(win)
+func (p *inlineImage) key() imageKey {
+	return imageKey{p.attachment.MediaID, p.attachment.Version, p.size, p.cell}
 }

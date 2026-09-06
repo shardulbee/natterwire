@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"os"
+	"slices"
 	"strings"
 
 	"go.rockorager.dev/vaxis"
@@ -42,6 +43,12 @@ type layout struct {
 	head                            string
 	dirty, following                bool
 	cell                            image.Point
+	blocks                          map[string]messageBlock
+}
+
+type messageBlock struct {
+	item item
+	rows []row
 }
 
 func (l *layout) bottom() {
@@ -73,12 +80,23 @@ func (l *layout) prepare(messages []item, width, height int, measure func(string
 			}
 		}
 		l.rows = l.rows[:0]
+		oldBlocks := l.blocks
+		if l.width != width || l.height != height || l.cell != cell {
+			oldBlocks = nil
+		}
+		l.blocks = make(map[string]messageBlock, len(messages))
 		l.head = ""
 		if len(messages) > 0 {
 			l.head = messages[0].ID
 		}
 		for i := len(messages) - 1; i >= 0; i-- {
 			m := messages[i]
+			if block, ok := oldBlocks[m.ID]; ok && equalItem(block.item, m) {
+				l.rows = append(l.rows, block.rows...)
+				l.blocks[m.ID] = block
+				continue
+			}
+			startRow := len(l.rows)
 			name, headerStyle := m.Sender, muted
 			if name == "" {
 				name = "Unknown sender"
@@ -127,8 +145,8 @@ func (l *layout) prepare(messages []item, width, height int, measure func(string
 			for _, a := range m.Attachments {
 				l.rows = append(l.rows, row{text: a.label(), id: m.ID, offset: offset, style: muted})
 				offset++
-				if a.preview != nil && cell.X > 0 && cell.Y > 0 {
-					preview := newInlineImage(a.preview, width, height, cell)
+				if a.MediaID != "" && a.Width > 0 && a.Height > 0 && cell.X > 0 && cell.Y > 0 {
+					preview := newInlineImage(a, width, height, cell)
 					for y := 0; y < preview.rows; y++ {
 						l.rows = append(l.rows, row{id: m.ID, offset: offset, image: preview, imageRow: y})
 						offset++
@@ -136,6 +154,7 @@ func (l *layout) prepare(messages []item, width, height int, measure func(string
 				}
 			}
 			l.rows = append(l.rows, row{id: m.ID, offset: offset})
+			l.blocks[m.ID] = messageBlock{m, slices.Clone(l.rows[startRow:])}
 		}
 		if anchor.id != "" {
 			for i, r := range l.rows {
@@ -172,15 +191,6 @@ func line(win vaxis.Window, y int, text string, s vaxis.Style, measure func(stri
 }
 
 func (a *app) draw(vx *vaxis.Vaxis, measure func(string) int) {
-	visibleImages := make(map[*inlineImage]bool)
-	defer func() {
-		for p := range a.images {
-			if !visibleImages[p] {
-				p.destroy(vx)
-			}
-		}
-		a.images = visibleImages
-	}()
 	root := vx.Window()
 	root.Clear()
 	vx.HideCursor()
@@ -239,8 +249,7 @@ func (a *app) draw(vx *vaxis.Vaxis, measure func(string) int) {
 			if r.image != nil {
 				if r.imageRow == 0 || i == c.top {
 					rows := min(r.image.rows-r.imageRow, c.top+historyHeight-i)
-					r.image.draw(vx, history.New(0, i-c.top, cw, rows), r.imageRow, rows)
-					visibleImages[r.image] = true
+					a.media.draw(vx, history.New(0, i-c.top, cw, rows), r.image, r.imageRow, rows)
 				}
 			} else {
 				line(history, i-c.top, r.text, r.style, measure)

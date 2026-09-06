@@ -1,10 +1,12 @@
 """Verify inline media, clipping, resize, and chat switching in the real PTY client."""
 import argparse
-import base64
 import http.server
 import json
 import os
 from pathlib import Path
+import re
+import shlex
+import statistics
 import subprocess
 import tempfile
 import threading
@@ -14,24 +16,33 @@ from smoke import Terminal
 
 
 class API(http.server.BaseHTTPRequestHandler):
-    image = base64.b64encode((Path(__file__).resolve().parents[2] / "macos/Natterwire/Assets/NatterwireIcon.png").read_bytes()).decode()
+    image = (Path(__file__).resolve().parents[2] / "macos/Natterwire/Assets/NatterwireIcon.png").read_bytes()
+    media_requests = 0
 
     def log_message(self, *_):
         pass
 
     def do_GET(self):
+        if self.path.startswith("/attachments/"):
+            API.media_requests += 1
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(self.image)))
+            self.end_headers()
+            self.wfile.write(self.image)
+            return
         if self.path.startswith("/chats?"):
             items = [{"id": "images", "displayName": "Image previews"}, {"id": "text", "displayName": "Text only"}]
         elif self.path.startswith("/chats/images/"):
             items = [
                 {"id": "3", "sender": "Alex", "sentAt": "2026-09-06T11:00:00Z", "text": "Here is the app icon.\ufffc", "attachments": [
-                    {"id": "png", "filename": "natterwire.png", "mimeType": "image/png", "dataBase64": self.image},
+                    {"id": "png", "filename": "natterwire.png", "mimeType": "image/png", "mediaID": "icon", "version": "1", "width": 1254, "height": 1254},
                     {"id": "missing", "filename": "missing.jpg", "mimeType": "image/jpeg"},
                     {"id": "pdf", "filename": "notes.pdf", "mimeType": "application/pdf"},
                 ]},
                 {"id": "2", "isFromMe": True, "text": "Can you send the icon?"},
                 {"id": "1", "sender": "Alex", "text": "\ufffc", "attachments": [
-                    {"id": "older", "filename": "earlier.png", "mimeType": "image/png", "dataBase64": self.image},
+                    {"id": "older", "filename": "earlier.png", "mimeType": "image/png", "mediaID": "icon", "version": "1", "width": 1254, "height": 1254},
                 ]},
             ]
         else:
@@ -81,6 +92,7 @@ def run(binary, captures):
         terminal.send("r")
         terminal.read(0.5)
         assert not image_cells(terminal), "Refresh used a non-Kitty renderer"
+        assert API.media_requests == 0, "Filename-only terminals must not fetch image bytes"
         print("PASS: filename-only fallback, scrolling, resize, draft, chat switch, refresh")
     finally:
         terminal.close()
@@ -98,12 +110,15 @@ def run_kitty(binary, captures):
         env = dict(os.environ, LIBGL_ALWAYS_SOFTWARE="1", LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu")
         env.pop("NO_COLOR", None)
         log = open(Path(tmp) / "kitty.log", "w+")
+        transcript = Path(tmp) / "terminal-output"
+        inputs, timing = Path(tmp) / "terminal-input", Path(tmp) / "terminal-timing"
         process = subprocess.Popen([
             "kitty", "--config", "NONE", "--listen-on", sock,
             "-o", "allow_remote_control=yes", "-o", "confirm_os_window_close=0",
             "-o", "initial_window_width=1100", "-o", "initial_window_height=750",
             "-o", "remember_window_size=no", "-o", "font_size=14",
-            binary, "--url", f"http://127.0.0.1:{server.server_port}",
+            "script", "-q", "-f", "-e", "--log-in", str(inputs), "--log-out", str(transcript), "--log-timing", str(timing), "-c",
+            shlex.join([binary, "--url", f"http://127.0.0.1:{server.server_port}"]),
         ], env=env, stdout=log, stderr=log)
 
         def remote(*args):
@@ -139,13 +154,29 @@ def run_kitty(binary, captures):
             if orange:
                 assert min(x for x, _ in orange) > 300, "Image overwrote sidebar"
                 assert min(y for _, y in orange) > 35, "Image overwrote header"
+                if name == "kitty-draft":
+                    # Sample the draft label's left edge, not cyan in the artwork.
+                    cyan = {y for y in range(img.height) for x in range(340, 390)
+                            if (lambda c: c[0] < 80 and c[1] > 150 and c[2] > 150)(img.getpixel((x, y)))}
+                    # The last two cyan runs are Draft and the input border;
+                    # earlier runs can be the sender label "You".
+                    starts = sorted(y for y in cyan if y - 1 not in cyan)
+                    assert len(starts) >= 2 and max(y for _, y in orange) < starts[-2], "Image overlaps draft label/composer"
 
         try:
             screen = expect("[Attachment: notes.pdf]")
             assert "▀" not in screen and "preview unavailable" not in screen
             capture("kitty-images")
+            before_scroll = transcript.stat().st_size
             remote("send-text", "\x15")
             capture("kitty-scrolled")
+            scroll_output = transcript.read_bytes()[before_scroll:]
+            assert b"\x1b_Ga=p," in scroll_output, "Scroll must update image placements"
+            assert b"\x1b_Gf=100" not in scroll_output, "Scroll reuploaded image pixels"
+            assert b"\x1b_Ga=d,d=I," not in scroll_output, "Scroll destroyed cached image data"
+            assert re.search(rb"a=p,[^;]*x=\d+,y=\d+,w=\d+,h=\d+", scroll_output), "Missing native crop command"
+            for i in range(60):
+                remote("send-text", "k" if i % 2 == 0 else "j")
             remote("send-text", "i")
             expect("Draft")
             capture("kitty-draft")
@@ -164,11 +195,35 @@ def run_kitty(binary, captures):
             remote("send-text", "r")
             time.sleep(0.5)
             capture("kitty-refreshed")
+            assert API.media_requests == 1, "Scroll, resize, refresh, and chat switch must reuse the decoded source"
             remote("send-text", "q")
             assert process.wait(timeout=5) == 0
+            # util-linux script timestamps input arrival and frame output on the
+            # same PTY. Excludes remote-command startup and terminal presentation.
+            streams = {"I": inputs.read_bytes().split(b"\n", 1)[1], "O": transcript.read_bytes().split(b"\n", 1)[1]}
+            offsets, samples, elapsed, started, tail = {"I": 0, "O": 0}, [], 0, None, b""
+            for record in timing.read_text().splitlines():
+                kind, delay, rest = record.split(" ", 2)
+                elapsed += float(delay)
+                if kind not in streams:
+                    continue
+                count = int(rest)
+                chunk = streams[kind][offsets[kind]:offsets[kind] + count]
+                offsets[kind] += count
+                if kind == "I" and chunk in (b"j", b"k"):
+                    assert started is None, "Scroll inputs overlapped before a frame completed"
+                    started = elapsed
+                elif kind == "O":
+                    if started is not None and b"\x1b[?2026l" in tail + chunk:
+                        samples.append((elapsed - started) * 1000)
+                        started = None
+                    tail = (tail + chunk)[-7:]
+            assert len(samples) == 60, f"Only measured {len(samples)} scroll frames"
+            print("Kitty warm image scroll, input-to-frame output: median %.2fms, p95 %.2fms, max %.2fms" % (
+                statistics.median(samples), sorted(samples)[56], max(samples)))
             log.seek(0)
             assert "DATA RACE" not in log.read()
-            print("PASS: native Kitty images, crop, draft, chat switch, cached reopen, resize, refresh, clean exit")
+            print("PASS: native Kitty images, scroll uses placements only (zero uploads/deletes), draft, cached reopen, resize, refresh, one media fetch, clean exit")
         finally:
             if process.poll() is None:
                 process.terminate()

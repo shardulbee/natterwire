@@ -38,11 +38,11 @@ type app struct {
 	pendingChats, pendingMessages bool
 	moreChats, olderMessages      bool
 	responses                     chan response
-	images                        map[*inlineImage]bool
+	media                         *mediaCache
 }
 
 func newApp(base string, demo bool) *app {
-	return &app{base: base, demo: demo, cache: make(map[string]*conversation), pendingChats: true, responses: make(chan response, 1)}
+	return &app{base: base, demo: demo, cache: make(map[string]*conversation), pendingChats: true, responses: make(chan response, 1), media: newMediaCache()}
 }
 
 func (a *app) current() *conversation { return a.cache[a.opened] }
@@ -249,11 +249,7 @@ func run(base string, demo bool) error {
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	defer client.CloseIdleConnections()
 	a := newApp(base, demo)
-	defer func() {
-		for p := range a.images {
-			p.destroy(vx)
-		}
-	}()
+	defer a.media.close(vx)
 	width := terminalWidth(vx)
 	timer := time.NewTicker(30 * time.Second)
 	defer timer.Stop()
@@ -262,12 +258,16 @@ func run(base string, demo bool) error {
 		a.pump(ctx, client)
 		a.draw(vx, width)
 		vx.Render()
+		if c := a.current(); c != nil {
+			a.media.pump(ctx, client, base, &c.layout)
+		}
 		event := pending
 		pending = nil
 		if event == nil {
 			select {
 			case event = <-vx.Events():
 			case event = <-a.responses:
+			case event = <-a.media.results:
 			case <-timer.C:
 				a.refresh()
 				continue
@@ -282,6 +282,8 @@ func run(base string, demo bool) error {
 			e()
 		case response:
 			a.accept(e)
+		case mediaResult:
+			a.media.accept(vx, e)
 		case vaxis.PasteEndEvent:
 			if a.mode == insert {
 				a.current().draft.Update(e)

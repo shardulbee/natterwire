@@ -53,6 +53,29 @@ import Testing
         #expect(Attachment.displayData(display) == nil)
     }
 
+    @Test func jpegDisplayMatchesOrientedMetadata() throws {
+        let context = try #require(CGContext(data: nil, width: 120, height: 80, bitsPerComponent: 8,
+                                            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        let image = try #require(context.makeImage())
+        let bytes = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(bytes, "public.jpeg" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, [kCGImagePropertyOrientation: 6] as CFDictionary)
+        #expect(CGImageDestinationFinalize(destination))
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).jpg")
+        try (bytes as Data).write(to: path)
+        defer { try? FileManager.default.removeItem(at: path) }
+        let fixture = try Fixture(attachmentPaths: [path.path])
+        let db = try MessagesDatabase(path: fixture.path)
+        let chat = try #require(db.chats(limit: 1, before: nil).items.first)
+        let attachment = try #require(db.messages(chatID: chat.id, limit: 1, before: nil, metadataOnly: true).items.first?.attachments.first)
+        let display = try db.media.response(id: #require(attachment.mediaID), path: path.path, version: attachment.version)
+        let source = try #require(CGImageSourceCreateWithData(display.body as CFData, nil))
+        let decoded = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        #expect(decoded.width == 80 && decoded.height == 120)
+        #expect(attachment.width == decoded.width && attachment.height == decoded.height)
+    }
+
     @Test func metadataBinaryVersionsBudgetAndPathSafety() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -78,7 +101,7 @@ import Testing
         let database = try MessagesDatabase(path: fixture.path)
         let api = NatterwireAPI(database: database)
         let chat = try #require(database.chats(limit: 1, before: nil).items.first)
-        var attachments: [Attachment] = []
+        var attachments: [NatterwireCore.Attachment] = []
         for route in ["/messages/\(chat.id)", "/chats/\(chat.id)/messages"] {
             let response = api.respond(method: "GET", target: route + "?media=metadata&limit=1")
             #expect(response.status == 200)

@@ -24,9 +24,7 @@ type item struct {
 func equalItem(a, b item) bool {
 	return a.ID == b.ID && a.DisplayName == b.DisplayName && a.Text == b.Text &&
 		a.SentAt == b.SentAt && a.Sender == b.Sender && a.IsFromMe == b.IsFromMe &&
-		slices.EqualFunc(a.Attachments, b.Attachments, func(a, b attachment) bool {
-			return a.ID == b.ID && a.Filename == b.Filename && a.MimeType == b.MimeType && a.DataBase64 == b.DataBase64 && a.DisplayDataBase64 == b.DisplayDataBase64
-		})
+		slices.Equal(a.Attachments, b.Attachments)
 }
 
 type page struct {
@@ -92,6 +90,9 @@ func (r request) url(base string) string {
 		path += "/" + url.PathEscape(r.chat) + "/messages"
 	}
 	q := url.Values{"limit": {"50"}}
+	if r.chat != "" {
+		q.Set("media", "metadata")
+	}
 	if r.before != "" {
 		q.Set("before", r.before)
 	}
@@ -163,7 +164,6 @@ func getPageOnce(ctx context.Context, client *http.Client, target string) (page,
 		for j := range m.Attachments {
 			a := &m.Attachments[j]
 			a.Filename, a.MimeType = clean(a.Filename, false), clean(a.MimeType, false)
-			a.preview = decodePreview(*a)
 		}
 	}
 	return p, nil

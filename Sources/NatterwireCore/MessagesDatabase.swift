@@ -54,8 +54,8 @@ public struct Attachment: Codable, Sendable {
     static func displayData(_ data: Data) -> Data? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let type = CGImageSourceGetType(source) as String?,
-              ["public.heic", "public.heif"].contains(type),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              ["public.heic", "public.heif"].contains(type) || (properties[kCGImagePropertyOrientation] as? Int ?? 1) != 1,
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int,
               width > 0, height > 0, width <= 32_000_000 / height else { return nil }
