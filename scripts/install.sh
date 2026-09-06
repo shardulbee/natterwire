@@ -52,22 +52,12 @@ mv -f "$stage/natterwire-tui" "$bin/natterwire-tui"
 if [[ "$(uname -s)" == Darwin ]]; then
   label=com.shardul.natterwire
   domain="gui/$(id -u)"
-  logs="$HOME/Library/Logs/natterwire"
   plist="$HOME/Library/LaunchAgents/$label.plist"
-  mkdir -p "$logs" "$(dirname "$plist")"
-  chmod 700 "$logs"
-  cp "$root/launchd/$label.plist" "$stage/agent.plist"
-  # Separate plutil arguments preserve spaces, quotes, and XML metacharacters.
-  plutil -remove ProgramArguments.0 "$stage/agent.plist"
-  plutil -insert ProgramArguments.0 -string "$HOME/Applications/Natterwire.app/Contents/MacOS/natterwire-api" "$stage/agent.plist"
-  plutil -replace StandardOutPath -string "$logs/stdout.log" "$stage/agent.plist"
-  plutil -replace StandardErrorPath -string "$logs/stderr.log" "$stage/agent.plist"
-  plutil -lint "$stage/agent.plist" >/dev/null
+  # Retire installations from versions that ran the API through launchd.
   launchctl bootout "$domain/$label" 2>/dev/null || true
-  mv -f "$stage/agent.plist" "$plist"
-  launchctl bootstrap "$domain" "$plist"
-  launchctl print "$domain/$label" >/dev/null
-  echo "LaunchAgent registered. Check $logs/stderr.log and the API before assuming it is running."
-  echo "Grant Full Disk Access to Natterwire.app if needed, then restart the LaunchAgent."
+  rm -f "$plist"
+  echo "Installed Natterwire API and $bin/natterwire-tui"
+  echo "Open $installed to start Natterwire."
+else
+  echo "Installed Natterwire API and $bin/natterwire-tui"
 fi
-echo "Installed Natterwire API and $bin/natterwire-tui"

@@ -31,28 +31,23 @@ The fixture refuses to overwrite an existing file. It includes archived text, du
 
 ## macOS installation and migration
 
-Run `scripts/install.sh` from an interactive terminal. It builds and signs `~/Applications/Natterwire.app`, links `~/.local/bin/natterwire-api` to the app's only executable, installs the TUI, and replaces the per-user LaunchAgent. It tries to reuse the prior Apple Development identity; `--sign IDENTITY` selects one and `--adhoc` uses ad-hoc signing. No Swift app is built. An unrecognized old app is moved once to `~/Applications/Natterwire.app.pre-go`, never silently deleted.
+Run `scripts/install.sh` from an interactive terminal. It builds and signs `~/Applications/Natterwire.app`, links `~/.local/bin/natterwire-api` to the app's only executable, and installs the TUI. It also stops and removes the LaunchAgent left by older releases; it does not register or start anything. The installer tries to reuse the prior Apple Development identity; `--sign IDENTITY` selects one and `--adhoc` uses ad-hoc signing. An unrecognized old app is moved once to `~/Applications/Natterwire.app.pre-go`, never silently deleted.
 
-Quit any old menu-bar app before installing so it releases port 8741. Do not reopen the retained backup while the Go service is running.
+Quit Natterwire before installing or updating so it releases port 8741, then open `Natterwire.app` from Finder. Quit the app to stop the API and reopen it to start again. Do not open the retained backup while Natterwire is running.
 
-In System Settings → Privacy & Security → Full Disk Access, add `~/Applications/Natterwire.app`. Restart the LaunchAgent after changing access:
+The window shows separate access checkmarks for Messages and Contacts. It stays open until you dismiss it. Closing the window keeps the API running; clicking the Dock icon reopens it. Choose Quit Natterwire to stop the app and API.
 
-```sh
-launchctl kickstart -k gui/$(id -u)/com.shardul.natterwire
-launchctl print gui/$(id -u)/com.shardul.natterwire
-tail -n 20 ~/Library/Logs/natterwire/stderr.log
-curl -fsS 'http://127.0.0.1:8741/chats?limit=1' >/dev/null
-```
+The app guides you to System Settings when Full Disk Access is missing and requests Contacts access. Add `~/Applications/Natterwire.app` under Privacy & Security → Full Disk Access. The app retries the Messages database every two seconds, so leave it open after granting access. If macOS itself asks you to Quit & Reopen, use that normal app action; no service commands are needed. Declining Contacts access only leaves names unresolved.
 
-A registered LaunchAgent is not proof that it can read Messages. Check the HTTP response and logs. Full Disk Access is tied to macOS TCC's executable identity and responsible launcher. A successful run from a terminal granted Full Disk Access does not prove a LaunchAgent has access. Prior grants may not transfer, even if the signing certificate is reused. If launchd fails, re-add the installed app and verify from launchd again. Do not grant blanket access to a shell or disable TCC to work around this.
+Running `natterwire-api` with explicit command-line flags remains a foreground CLI workflow. Quit the app first to avoid a port conflict.
 
-`launchctl bootout gui/$(id -u)/com.shardul.natterwire` stops the service until the next login or bootstrap. Crashes retry after launchd's throttle interval. `scripts/uninstall.sh` removes only a recognized Go app, command links, and LaunchAgent; `--purge` also removes logs. It retains the pre-Go backup. The installer does not change Tailscale or privacy settings.
+Full Disk Access is tied to macOS TCC's executable identity and may not transfer to an updated app even when the signing certificate is reused. Re-add the installed app if necessary. Do not grant blanket access to a shell or disable TCC. Quit Natterwire before running `scripts/uninstall.sh`; it removes only a recognized app and command links while retaining the pre-Go backup. `--purge` also removes legacy logs. The installer does not change Tailscale or privacy settings.
 
 ## Contacts and pins
 
 On macOS, the native Contacts bridge requests permission on first use and updates the in-memory name map when Contacts changes. No contact export is written. An explicit `--contacts PATH` overrides native Contacts with a JSON dictionary; `--contacts ''` disables names. Linux has no native default, but accepts the same explicit JSON file. Emails are case-insensitive and phone matching uses normalized digits with a last-ten-digit fallback.
 
-Native access requires the app bundle's Contacts usage description. Bare command-line builds fall back to raw handles. Declining Contacts permission does not stop the API; granting or revoking access updates names on subsequent lookups. Contacts setup starts after the Messages database opens, so grant Full Disk Access first.
+Native access requires the app bundle's Contacts usage description. Bare command-line builds fall back to raw handles. Declining Contacts permission does not stop the API; granting or revoking access updates names on subsequent lookups. Contacts permission is requested at launch, independently of Messages access.
 
 Pins load once from `~/Library/Preferences/com.apple.messages.pinning.plist`, using `pD.pP`. Both binary and XML plists work. `--pins PATH` overrides it; `--pins ''` disables it. Missing or inaccessible default preferences fall back to activity order. Restart after changing pins.
 
@@ -79,4 +74,4 @@ go -C tui vet ./...
 tui/.venv/bin/python tui/tests/integration.py api/bin/natterwire-api tui/bin/natterwire-tui
 ```
 
-Build both binaries first and install the [TUI test dependencies](../tui/README.md#checks) for the integration check. It runs the real service and TUI in a PTY and checks archived text, naming, drafts, live SQLite WAL updates, and shutdown. Linux tests cannot verify macOS TCC, launchd, code signing, the Contacts adapter, or decoding parity against a live Messages database.
+Build both binaries first and install the [TUI test dependencies](../tui/README.md#checks) for the integration check. It runs the real service and TUI in a PTY and checks archived text, naming, drafts, live SQLite WAL updates, and shutdown. Linux tests cannot verify macOS TCC, the app lifecycle, code signing, the Contacts adapter, or decoding parity against a live Messages database.

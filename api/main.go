@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -151,28 +152,57 @@ func main() {
 			}
 		}
 	}
-	d, err := openDatabase(*dbPath, n, pins)
-	if err != nil {
-		log.Fatalf("cannot open Messages database: %v. On macOS grant Full Disk Access to Natterwire.app, then restart; prior grants may not transfer", err)
-	}
-	defer d.db.Close()
+	var lookup func(string) string
 	if !contactsSet {
-		d.nativeName = nativeContacts()
+		lookup = nativeContacts()
 	}
-	server := &http.Server{Addr: fmt.Sprintf("127.0.0.1:%d", *port), Handler: d, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, WriteTimeout: 60 * time.Second}
+	run := func(ctx context.Context, ready func()) error {
+		d, err := openDatabase(*dbPath, n, pins)
+		if err != nil {
+			return fmt.Errorf("%w: %v", errMessagesAccess, err)
+		}
+		defer d.db.Close()
+		d.nativeName = lookup
+		return serve(ctx, fmt.Sprintf("127.0.0.1:%d", *port), d, ready)
+	}
+	if flag.NFlag() == 0 && nativeApplication(run) {
+		return
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdown)
-	}()
-	log.Printf("listening on http://%s", server.Addr)
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := run(ctx, func() { log.Printf("listening on http://127.0.0.1:%d", *port) }); err != nil {
 		log.Fatal(err)
 	}
-	<-done
+}
+
+var errMessagesAccess = errors.New("Messages database unavailable; enable Full Disk Access for Natterwire.app")
+
+func serve(ctx context.Context, address string, handler http.Handler, ready func()) error {
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return err
+	}
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, WriteTimeout: 60 * time.Second}
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		select {
+		case <-ctx.Done():
+			shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if server.Shutdown(shutdown) != nil {
+				_ = server.Close()
+			}
+		case <-done:
+		}
+	}()
+	ready()
+	err = server.Serve(listener)
+	close(done)
+	<-stopped
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
 }

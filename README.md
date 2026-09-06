@@ -4,7 +4,7 @@
 
 # Natterwire
 
-Natterwire is a read-only Messages API and terminal client, both written in Go. On macOS the API is packaged as a background-only `Natterwire.app`; it has no window or menu. The API reads the live Messages database on macOS and SQLite copies or synthetic fixtures on Linux.
+Natterwire is a read-only Messages API and terminal client, both written in Go. On macOS the API is packaged as a normal `Natterwire.app` with a window and Dock icon. The API reads the live Messages database on macOS and SQLite copies or synthetic fixtures on Linux.
 
 The [terminal client](tui/README.md) browses chats and composes local drafts. Sending is not supported.
 
@@ -16,9 +16,9 @@ Requires Go 1.25+. macOS builds also need Xcode command-line tools for the Objec
 scripts/install.sh
 ```
 
-On macOS this installs `~/Applications/Natterwire.app`, links `~/.local/bin/natterwire-api` to its sole executable, installs the TUI, and registers the API LaunchAgent. The app requests Contacts access on first use and keeps names updated in memory. Full Disk Access is still required for Messages and cannot be granted automatically. See [API setup, migration, and Linux fixtures](api/README.md). Linux installs standalone Go binaries and does not load Contacts by default.
+On macOS this installs `~/Applications/Natterwire.app`, links `~/.local/bin/natterwire-api` to its sole executable, and installs the TUI. Open the app from Finder to start the API; quitting the app stops it, and reopening it starts it again. The window guides setup for Full Disk Access and Contacts, and retries the Messages database automatically while access is unavailable. See [API setup, migration, and Linux fixtures](api/README.md). Linux installs standalone Go binaries and does not load Contacts by default.
 
-Uninstall with `scripts/uninstall.sh`. Pass `--purge` to also remove logs.
+Quit Natterwire before installing an update or uninstalling. Uninstall with `scripts/uninstall.sh`; `--purge` also removes legacy logs.
 
 ## API
 

@@ -2,6 +2,7 @@
 set -eu
 
 if [ "$(uname -s)" = Darwin ]; then
+    # Clean up the LaunchAgent used by older Natterwire releases.
     launchctl bootout "gui/$(id -u)/com.shardul.natterwire" 2>/dev/null || true
     rm -f "$HOME/Library/LaunchAgents/com.shardul.natterwire.plist"
 fi
@@ -15,4 +16,4 @@ if [ "${1:-}" = "--purge" ]; then
     rm -f "$HOME/Library/Logs/natterwire/stdout.log" "$HOME/Library/Logs/natterwire/stderr.log"
     rmdir "$HOME/Library/Logs/natterwire" 2>/dev/null || true
 fi
-echo "Removed the Go app, command links, and LaunchAgent. Any pre-Go app backup was retained."
+echo "Removed the Natterwire app and command links. Any pre-Go app backup was retained."
