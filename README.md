@@ -4,7 +4,7 @@
 
 # Natterwire
 
-Natterwire is a read-only Messages API and terminal client, both written in Go. On macOS the API is packaged as a normal `Natterwire.app` with a window and Dock icon. The API reads the live Messages database on macOS and SQLite copies or synthetic fixtures on Linux.
+Natterwire is a read-only Messages API and terminal client, both written in Go. On macOS the API is packaged as `Natterwire.app` with a menu bar fox that opens its status and permissions window, and no Dock icon. The API reads the live Messages database on macOS and SQLite copies or synthetic fixtures on Linux.
 
 The [terminal client](tui/README.md) browses chats and composes local drafts. Sending is not supported.
 

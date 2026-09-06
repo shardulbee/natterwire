@@ -5,6 +5,7 @@
 
 @interface NatterwireDelegate : NSObject <NSApplicationDelegate>
 @property(strong) NSWindow *window;
+@property(strong) NSStatusItem *statusItem;
 @property(strong) NSTextField *status;
 @property(strong) NSTextField *detail;
 @property(strong) NSTextField *messagesAccess;
@@ -16,6 +17,7 @@
     [self.window makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
 }
+- (void)openWindow:(id)sender { [self showWindow]; }
 - (void)applicationDidFinishLaunching:(NSNotification *)note { [self showWindow]; }
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)app { return NO; }
 - (void)refreshContactsStatus {
@@ -48,6 +50,30 @@
 
 static NatterwireDelegate *delegate;
 
+// Fox profile from the app artwork, simplified for an 18-point template image.
+static NSImage *statusIcon(void) {
+    NSImage *image = [NSImage imageWithSize:NSMakeSize(18,18) flipped:NO drawingHandler:^BOOL(NSRect rect) {
+        NSBezierPath *fox = [NSBezierPath bezierPath];
+        [fox moveToPoint:NSMakePoint(2,17)];
+        [fox lineToPoint:NSMakePoint(7,13)];
+        [fox lineToPoint:NSMakePoint(12,17)];
+        [fox lineToPoint:NSMakePoint(11,11)];
+        [fox lineToPoint:NSMakePoint(14,8)];
+        [fox lineToPoint:NSMakePoint(17,7)];
+        [fox curveToPoint:NSMakePoint(11,4) controlPoint1:NSMakePoint(16,4) controlPoint2:NSMakePoint(13,4)];
+        [fox lineToPoint:NSMakePoint(7,1)];
+        [fox curveToPoint:NSMakePoint(2,9) controlPoint1:NSMakePoint(3,2) controlPoint2:NSMakePoint(1,5)];
+        [fox closePath];
+        [fox appendBezierPathWithOvalInRect:NSMakeRect(10,8,1.5,1.5)];
+        fox.windingRule = NSEvenOddWindingRule;
+        [[NSColor blackColor] setFill];
+        [fox fill];
+        return YES;
+    }];
+    image.template = YES;
+    return image;
+}
+
 static NSTextField *permissionRow(NSView *content, NSString *title, CGFloat y, SEL action) {
     NSTextField *label = [NSTextField labelWithString:title];
     label.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
@@ -69,9 +95,15 @@ int nw_app_prepare(void) {
     @autoreleasepool {
         if (![[[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundlePackageType"] isEqual:@"APPL"]) return 0;
         [NSApplication sharedApplication];
-        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
         delegate = [NatterwireDelegate new];
         NSApp.delegate = delegate;
+        delegate.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength];
+        delegate.statusItem.button.image = statusIcon();
+        delegate.statusItem.button.toolTip = @"Natterwire — Open status and permissions";
+        delegate.statusItem.button.accessibilityLabel = @"Natterwire status and permissions";
+        delegate.statusItem.button.target = delegate;
+        delegate.statusItem.button.action = @selector(openWindow:);
         NSMenu *menu = [NSMenu new];
         NSMenuItem *item = [NSMenuItem new];
         [menu addItem:item];
@@ -81,7 +113,7 @@ int nw_app_prepare(void) {
         NSApp.mainMenu = menu;
 
         delegate.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,350)
-            styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
+            styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
             backing:NSBackingStoreBuffered defer:NO];
         delegate.window.title = @"Natterwire";
         delegate.window.releasedWhenClosed = NO;
@@ -104,11 +136,16 @@ int nw_app_prepare(void) {
         [NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer) {
             [delegate refreshContactsStatus];
         }];
-        NSTextField *note = [NSTextField wrappingLabelWithString:@"Closing this window leaves the API running.\nQuit Natterwire (⌘Q) to stop it."];
+        NSTextField *note = [NSTextField wrappingLabelWithString:@"Closing this window leaves the API running.\nClick the menu bar fox to reopen it."];
         note.font = [NSFont systemFontOfSize:11];
         note.textColor = [NSColor secondaryLabelColor];
-        note.frame = NSMakeRect(24,20,432,36);
+        note.frame = NSMakeRect(24,20,292,36);
         [content addSubview:note];
+        NSButton *quit = [NSButton buttonWithTitle:@"Quit Natterwire" target:NSApp action:@selector(terminate:)];
+        quit.keyEquivalent = @"q";
+        quit.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+        quit.frame = NSMakeRect(324,24,132,28);
+        [content addSubview:quit];
         return 1;
     }
 }
