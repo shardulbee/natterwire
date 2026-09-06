@@ -16,7 +16,7 @@ import (
 )
 
 func TestMerge(t *testing.T) {
-	p := demoPage("alex")
+	p := page{Items: []item{{ID: "3"}, {ID: "2"}, {ID: "1"}}}
 	update := page{Items: []item{{ID: "4", Text: "new"}, {ID: "3", Text: "edited"}}, NextBefore: "cursor"}
 	if !p.merge(update, false) || len(p.Items) != 4 || p.Items[1].Text != "edited" || p.Items[3].ID != "1" || p.NextBefore != "" {
 		t.Fatalf("refresh lost history or edits: %+v", p)
@@ -95,7 +95,7 @@ func TestModesCacheAndStaleResponses(t *testing.T) {
 	if c.dirty {
 		t.Fatal("unchanged poll dirtied layout")
 	}
-	a.key(vaxis.Key{Keycode: 'j'})
+	a.key(vaxis.Key{Keycode: 'j', ShiftedCode: 'J', Modifiers: vaxis.ModShift})
 	if a.opened != "weekend" || a.mode != sidebar || !a.pendingMessages {
 		t.Fatal("sidebar did not activate chat")
 	}
@@ -109,19 +109,18 @@ func TestModesCacheAndStaleResponses(t *testing.T) {
 		t.Fatal("draft or paste shortcuts changed")
 	}
 	a.key(vaxis.Key{Keycode: vaxis.KeyEsc})
-	if a.mode != transcript {
+	if a.mode != sidebar {
 		t.Fatal("escape did not exit insert")
 	}
-	a.key(vaxis.Key{Keycode: 'h'})
-	a.key(vaxis.Key{Keycode: 'k'})
+	a.key(vaxis.Key{Keycode: 'k', ShiftedCode: 'K', Modifiers: vaxis.ModShift})
 	c.prepare(c.Items, 40, 5, unicodeWidth, &vaxis.Vaxis{})
 	if a.current() != c || &c.rows[0] != rows || !c.following {
 		t.Fatal("warm switch lost cache or bottom position")
 	}
 	a.pendingMessages = false
 	a.key(vaxis.Key{Keycode: 'l'})
-	if a.pendingMessages {
-		t.Fatal("focusing transcript triggered another fetch")
+	if a.pendingMessages || a.mode != sidebar {
+		t.Fatal("obsolete focus key changed state")
 	}
 	c.scroll(-2)
 	a.key(vaxis.Key{Keycode: 'g', ShiftedCode: 'G', Modifiers: vaxis.ModShift})
@@ -136,6 +135,47 @@ func TestModesCacheAndStaleResponses(t *testing.T) {
 	a.refresh()
 	if !a.pendingChats || !a.pendingMessages {
 		t.Fatal("refresh flags not queued")
+	}
+}
+
+func TestSidebarScrollKeys(t *testing.T) {
+	a := newApp("", true)
+	a.accept(response{page: demoPage("")})
+	c := a.current()
+	c.rows, c.height = make([]row, 100), 10
+	for _, tc := range []struct {
+		key   vaxis.Key
+		delta int
+	}{
+		{vaxis.Key{Keycode: 'j'}, 1},
+		{vaxis.Key{Keycode: 'k'}, -1},
+		{vaxis.Key{Keycode: 'd', Modifiers: vaxis.ModCtrl}, 5},
+		{vaxis.Key{Keycode: 'u', Modifiers: vaxis.ModCtrl}, -5},
+		{vaxis.Key{Keycode: vaxis.KeyPgDown}, 5},
+		{vaxis.Key{Keycode: vaxis.KeyPgUp}, -5},
+	} {
+		c.top = 40
+		a.key(tc.key)
+		if c.top != 40+tc.delta || a.mode != sidebar || a.selected != 0 || !a.navigation(tc.key) {
+			t.Fatalf("%s did not scroll while retaining sidebar focus: top=%d", tc.key, c.top)
+		}
+	}
+	for _, key := range "du" {
+		c.top = 40
+		k := vaxis.Key{Keycode: key}
+		a.key(k)
+		if c.top != 40 || a.navigation(k) {
+			t.Fatalf("plain %c must not scroll", key)
+		}
+	}
+	a.chats.NextBefore, c.NextBefore = "chats-cursor", "messages-cursor"
+	a.key(vaxis.Key{Keycode: 'n'})
+	if !a.moreChats || a.olderMessages {
+		t.Fatal("n must request chats, not messages")
+	}
+	a.key(vaxis.Key{Keycode: 'o'})
+	if !a.olderMessages {
+		t.Fatal("o must request older messages from sidebar")
 	}
 }
 

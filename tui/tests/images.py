@@ -56,23 +56,23 @@ def run(binary, captures):
         assert "\ufffc" not in terminal.text()
         assert image_cells(terminal), "Preview emitted no colored cells"
         terminal.capture(captures, "images")
-        terminal.send("ljjjkkk")
+        terminal.send("jjjkkk")
         terminal.resize(70, 18)
         terminal.read(0.5)
         assert image_cells(terminal)
         assert all(25 <= x < 69 and 2 <= y < 17 for x, y in image_cells(terminal)), "Preview escaped transcript"
         terminal.capture(captures, "images-clipped")
-        terminal.send("u")
+        terminal.send("\x15")
         terminal.send("i")
         terminal.expect("Draft")
         assert all(y < 13 for _, y in image_cells(terminal)), "Preview overwrote composer"
         terminal.capture(captures, "images-draft")
         terminal.send("\x1b")
-        terminal.send("hj")
+        terminal.send("J")
         terminal.expect("No images in this chat.")
         assert not image_cells(terminal), "Image cells leaked into another chat"
         terminal.resize(110, 32)
-        terminal.send("k")
+        terminal.send("K")
         terminal.expect("[Image: natterwire.png]")
         assert image_cells(terminal), "Cached image disappeared"
         terminal.send("r")

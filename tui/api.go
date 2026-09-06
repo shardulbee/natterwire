@@ -173,16 +173,32 @@ func load(ctx context.Context, client *http.Client, base string, r request, demo
 }
 
 func demoPage(chat string) page {
+	p := page{}
 	switch chat {
 	case "":
 		return page{Items: []item{{ID: "alex", DisplayName: "Alex Chen"}, {ID: "weekend", DisplayName: "Weekend plans"}, {ID: "sam", DisplayName: "Sam Rivera"}}}
 	case "alex":
-		return page{Items: []item{
+		p.Items = []item{
 			{ID: "3", Text: "Perfect. Meet at the coffee shop at 10? ☕", SentAt: "2026-09-05T14:12:00Z", Sender: "Alex"},
 			{ID: "2", Text: "Yes! I can bring the camera. Let's take the trail along the lake if the weather holds.", SentAt: "2026-09-05T14:10:00Z", IsFromMe: true},
 			{ID: "1", Text: "Hey, are you still up for a walk tomorrow?", SentAt: "2026-09-05T14:08:00Z", Sender: "Alex"},
-		}}
-	default:
-		return page{Items: []item{}}
+		}
 	}
+	texts := []string{
+		"Coffee before the walk? ☕",
+		"I checked the route. The lakeside trail is open, but the north entrance is closed. Let's meet by the bridge and take the longer path back.",
+		"Sounds good! I'll bring snacks and water.",
+		"Packing list:\nCamera, spare battery, and a rain jacket.\nThe forecast says it might rain after lunch.",
+		"See you there ❤️",
+	}
+	for i := 100; i > 0; i-- {
+		p.Items = append(p.Items, item{
+			ID:       fmt.Sprintf("%s-history-%d", chat, i),
+			Text:     fmt.Sprintf("%03d: %s", i, texts[(i-1)%len(texts)]),
+			SentAt:   fmt.Sprintf("2026-09-04T%02d:%02d:00Z", 9+i/60, i%60),
+			Sender:   map[string]string{"alex": "Alex", "weekend": "Jamie", "sam": "Sam"}[chat],
+			IsFromMe: i%3 == 0,
+		})
+	}
+	return p
 }

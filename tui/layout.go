@@ -216,9 +216,6 @@ func (a *app) draw(vx *vaxis.Vaxis, measure func(string) int) {
 	content := root.New(sw+2, 0, w-sw-3, h-1)
 	if c := a.current(); c != nil {
 		headerStyle := vaxis.Style{Attribute: vaxis.AttrBold}
-		if a.mode == transcript {
-			headerStyle = accent
-		}
 		line(content, 0, c.name, headerStyle, measure)
 		cw, ch := content.Size()
 		historyHeight := ch - 2
@@ -274,9 +271,8 @@ func (a *app) draw(vx *vaxis.Vaxis, measure func(string) int) {
 		line(content, 0, "Natterwire", accent, measure)
 	}
 	help := []string{
-		" j/k select  l transcript  i draft  n more  r refresh  q quit",
-		" CHAT  j/k scroll  d/u half-page  h sidebar  i draft  o older  G latest  r refresh",
-		" INSERT  Esc transcript  Ctrl+C quit",
+		" j/k scroll  J/K chats  ^D/^U half-page  G latest  i draft  n more chats  o older  r refresh  q quit",
+		" INSERT  Esc sidebar  Ctrl+C quit",
 	}[a.mode]
 	if a.failure != "" {
 		help = a.failure

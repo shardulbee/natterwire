@@ -26,13 +26,13 @@ Use `GOARCH=arm64` and a different output directory for ARM Linux.
 
 | Focus | Keys |
 | --- | --- |
-| Sidebar | `j/k` switch chats, `l` or Enter focuses transcript, `i` opens its draft, `n` loads more chats |
-| Transcript | `j/k` scroll lines, `d/u` half-pages, `h` sidebar, `i` draft, `o` older history, `G` latest |
-| Insert | Type normally, Esc returns to transcript; Enter explains why sending is unavailable |
+| Sidebar | `j/k` scroll transcript lines, `J/K` switch chats, Ctrl+D/Ctrl+U scroll half-pages, `G` jumps to latest |
+| Sidebar | `i` opens the draft, `n` loads more chats into the sidebar, `o` loads older messages in the current chat |
+| Insert | Type normally, Esc returns to sidebar; Enter explains why sending is unavailable |
 | Outside insert | `r` refreshes chats and open transcript, `q` quits |
 | Anywhere | Ctrl+L repaints, Ctrl+C quits |
 
-Requires at least 60 columns by 14 rows. Arrow keys also work. Color indicates focus; `>` marks the open chat. Selecting a chat displays its cached transcript immediately while refreshing in the background; uncached chats need an initial fetch. Switching chats resets to the bottom; drafts survive switches within the running session. The empty composer stays hidden until insert mode.
+Requires at least 60 columns by 14 rows. Focus stays on the sidebar except while composing. Up/Down switch chats; PageUp/PageDown scroll transcript half-pages; End jumps to latest. Color indicates focus; `>` marks the open chat. Selecting a chat displays its cached transcript immediately while refreshing in the background; uncached chats need an initial fetch. Switching chats resets to the bottom; drafts survive switches within the running session. The empty composer stays hidden until insert mode.
 
 Image attachments render inline as colored half-block previews, up to 48 columns by 12 rows, and scroll with the transcript. PNG, JPEG, GIF (first frame), and WebP are supported; HEIC and other unsupported, missing, or oversized images show a filename instead. Decoding is limited to 10 MiB and 32 megapixels per image, with a 64 MiB API page limit. `NO_COLOR` keeps attachment labels without previews. Requires the Mac API's `attachments` fields.
 

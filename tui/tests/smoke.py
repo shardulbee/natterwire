@@ -188,24 +188,23 @@ def run(binary, captures):
     terminal = Terminal(binary, ["--url", f"http://127.0.0.1:{server.server_port}"])
     try:
         terminal.expect("Message 060")
-        terminal.expect("j/k select")
-        terminal.send("j")
+        terminal.expect("J/K chats")
+        terminal.send("J")
         terminal.expect("Bring your camera.")
-        terminal.expect("j/k select")
+        terminal.expect("J/K chats")
         assert "Message 060" not in terminal.text(), "Sidebar selection must switch the transcript"
         terminal.capture(captures, "sidebar-switch")
         # Cached switches must render even while their refresh is slow.
         API.delay = 1.5
-        terminal.send("k")
+        terminal.send("K")
         terminal.expect("Message 060", seconds=0.5)
-        terminal.send("j")
+        terminal.send("J")
         terminal.expect("Bring your camera.", seconds=0.5)
-        terminal.expect("j/k select")
+        terminal.expect("J/K chats")
         terminal.read(3.5)
         API.delay = 0
-        terminal.send("l")
         terminal.expect("Bring your camera.")
-        terminal.expect("CHAT  j/k")
+        terminal.expect("j/k scroll")
         terminal.send("ihello jkdu")
         terminal.expect("hello jkdu")
         terminal.send("\x1b[200~ paste\njk\x1b[201~")
@@ -214,11 +213,22 @@ def run(binary, captures):
         terminal.expect("Not sent:")
         terminal.capture(captures, "draft")
         terminal.send("\x1b")
-        terminal.expect("CHAT  j/k")
-        terminal.send("hkl")
+        terminal.expect("J/K chats")
+        terminal.send("K")
         terminal.expect("Message 060")
-        terminal.send("u")
+        bottom = terminal.screen.display[2][32:]
+        terminal.send("k")
+        assert terminal.screen.display[2][32:] != bottom
+        terminal.send("j")
+        assert terminal.screen.display[2][32:] == bottom
+        terminal.send("\x15")
+        assert "Message 060" not in terminal.text()
+        terminal.send("\x04")
+        terminal.expect("Message 060")
+        terminal.send("\x15")
         before = terminal.screen.display[2][32:]
+        terminal.send("du")
+        assert terminal.screen.display[2][32:] == before, "Plain d/u must not scroll"
         assert "Message 060" not in terminal.text()
         API.newest = 62
         terminal.send("r")
@@ -230,9 +240,9 @@ def run(binary, captures):
         terminal.send("o")
         terminal.read(0.8)
         assert any("before=" in path for _, path in API.requests)
-        terminal.send("hjl")
+        terminal.send("J")
         terminal.expect("hello jkdu")
-        terminal.send("hkl")
+        terminal.send("K")
         terminal.expect("Message 062")
         # A slow fetch must not block editing or switching modes.
         API.delay = 1.5

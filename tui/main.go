@@ -16,7 +16,6 @@ type mode int
 
 const (
 	sidebar mode = iota
-	transcript
 	insert
 )
 
@@ -158,19 +157,26 @@ func (a *app) key(k vaxis.Key) bool {
 		return false
 	}
 	s := k.String()
-	if k.Matches('G') {
-		s = "G"
+	for _, key := range "GJK" {
+		if k.Matches(key) {
+			s = string(key)
+		}
 	}
 	if a.mode == insert {
 		switch s {
 		case "Escape":
-			a.mode = transcript
+			a.mode = sidebar
 		case "Enter":
 			a.status = "Not sent: the API has no send endpoint. Your draft is unchanged."
 		default:
 			c.draft.Update(k)
 		}
 		return true
+	}
+	if k.Matches('d', vaxis.ModCtrl) {
+		s = "Page_Down"
+	} else if k.Matches('u', vaxis.ModCtrl) {
+		s = "Page_Up"
 	}
 	switch s {
 	case "q":
@@ -181,33 +187,28 @@ func (a *app) key(k vaxis.Key) bool {
 		if c != nil {
 			a.mode = insert
 		}
+	case "J", "Down", "K", "Up":
+		previous := a.selected
+		if s == "J" || s == "Down" {
+			a.selected = min(a.selected+1, max(0, len(a.chats.Items)-1))
+		} else {
+			a.selected = max(0, a.selected-1)
+		}
+		if previous != a.selected {
+			a.activate(sidebar)
+		}
+	case "n":
+		a.moreChats = a.chats.NextBefore != ""
 	default:
-		if a.mode == sidebar {
-			previous := a.selected
+		if c != nil {
 			switch s {
-			case "j", "Down":
-				a.selected = min(a.selected+1, max(0, len(a.chats.Items)-1))
-			case "k", "Up":
-				a.selected = max(0, a.selected-1)
-			case "l", "Enter":
-				a.activate(transcript)
-			case "n":
-				a.moreChats = a.chats.NextBefore != ""
-			}
-			if previous != a.selected {
-				a.activate(sidebar)
-			}
-		} else if c != nil {
-			switch s {
-			case "h", "Escape":
-				a.mode = sidebar
-			case "j", "Down":
+			case "j":
 				c.scroll(1)
-			case "k", "Up":
+			case "k":
 				c.scroll(-1)
-			case "d", "Page_Down":
+			case "Page_Down":
 				c.scroll(max(1, c.height/2))
-			case "u", "Page_Up":
+			case "Page_Up":
 				c.scroll(-max(1, c.height/2))
 			case "G", "End":
 				c.bottom()
@@ -226,11 +227,12 @@ func (a *app) navigation(k vaxis.Key) bool {
 	if a.mode == insert || k.EventType == vaxis.EventPaste || k.EventType == vaxis.EventRelease {
 		return false
 	}
-	switch k.String() {
-	case "j", "k", "Up", "Down":
+	if k.Matches('J') || k.Matches('K') || k.Matches('d', vaxis.ModCtrl) || k.Matches('u', vaxis.ModCtrl) {
 		return true
-	case "d", "u", "Page_Up", "Page_Down":
-		return a.mode == transcript
+	}
+	switch k.String() {
+	case "j", "k", "Up", "Down", "Page_Up", "Page_Down":
+		return true
 	}
 	return false
 }

@@ -38,7 +38,6 @@ if __name__ == '__main__':
     terminal = Terminal(args.binary, ['--url', f'http://127.0.0.1:{server.server_port}'], width_mode=args.width)
     try:
         terminal.expect('Message 080')
-        terminal.send('l')
         for key in 'k' * 30 + 'j' * 10:
             terminal.send(key)
         terminal.capture(args.captures, 'incremental')
