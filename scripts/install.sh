@@ -1,53 +1,64 @@
-#!/bin/sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 
-label="com.shardul.natterwire"
-old_label="com.shardul.messages-rest"
-domain="gui/$(id -u)"
-project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-log_dir="$HOME/Library/Logs/natterwire"
-old_log_dir="$HOME/Library/Logs/messages-rest"
-agent_dir="$HOME/Library/LaunchAgents"
-app="$HOME/Applications/Natterwire.app"
-old_app="$HOME/Applications/Messages REST.app"
-binary="$app/Contents/MacOS/natterwire"
-plist="$agent_dir/$label.plist"
-old_plist="$agent_dir/$old_label.plist"
-
-"$project_dir/scripts/build-app" "$@" >/dev/null
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+bin="$HOME/.local/bin"
+identity=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --sign) identity="${2:?--sign requires an identity}"; shift 2 ;;
+    --adhoc) identity="-"; shift ;;
+    *) echo "Usage: scripts/install.sh [--sign IDENTITY | --adhoc]" >&2; exit 2 ;;
+  esac
+done
 umask 077
-mkdir -p "$log_dir" "$agent_dir" "$HOME/Applications"
-chmod 700 "$log_dir"
+mkdir -p "$bin"
+stage="$(mktemp -d "$bin/.natterwire.XXXXXX")"
+trap 'rm -rf "$stage"' EXIT
+CGO_ENABLED=0 go -C "$root/api" build -trimpath -o "$stage/natterwire-api" .
+CGO_ENABLED=0 go -C "$root/tui" build -trimpath -o "$stage/natterwire-tui" .
 
-launchctl bootout "$domain/$label" 2>/dev/null || true
-pkill -x natterwire 2>/dev/null || true
-sleep 1
-rm -rf "$app"
-ditto "$project_dir/dist/Natterwire.app" "$app"
-rm -rf "$project_dir/dist/Natterwire.app"
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app" >/dev/null 2>&1 || true
-
-sed \
-    -e "s|__PROGRAM__|$binary|g" \
-    -e "s|__LOG_DIR__|$log_dir|g" \
-    "$project_dir/launchd/$label.plist" > "$plist"
-chmod 644 "$plist"
-plutil -lint "$plist" >/dev/null
-
-# The replacement files are in place before the old service is stopped.
-launchctl bootout "$domain/$old_label" 2>/dev/null || true
-if ! launchctl bootstrap "$domain" "$plist"; then
-    [ -f "$old_plist" ] && launchctl bootstrap "$domain" "$old_plist" 2>/dev/null || true
-    exit 1
+if [[ "$(uname -s)" == Darwin ]]; then
+  # Reuse a real signing identity when available, but never assume its TCC grants
+  # carry from the former app bundle to this standalone executable.
+  if [[ -z "$identity" ]]; then
+    installed="$bin/natterwire-api"
+    [[ -f "$installed" ]] || installed="$HOME/Applications/Natterwire.app"
+    prior="$(codesign -dvv "$installed" 2>&1 | awk -F= '/^Authority=/{print substr($0,index($0,"=")+1); exit}' || true)"
+    available="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+    if [[ -n "$prior" && "$available" == *"\"$prior\""* ]]; then
+      identity="$prior"
+    else
+      identity="$(printf '%s\n' "$available" | awk -F'"' '/Apple Development:/ {print $2; exit}')"
+      identity="${identity:--}"
+    fi
+  fi
+  codesign --force --sign "$identity" --identifier com.shardul.natterwire.api --timestamp=none "$stage/natterwire-api"
+  codesign --verify --strict "$stage/natterwire-api"
 fi
-launchctl kickstart -k "$domain/$label"
-launchctl print "$domain/$label" >/dev/null
 
-# Cleanup happens only after launchd accepts the replacement.
-rm -f "$old_plist"
-rm -rf "$old_app" "$old_log_dir"
+mv -f "$stage/natterwire-api" "$bin/natterwire-api"
+mv -f "$stage/natterwire-tui" "$bin/natterwire-tui"
 
-echo "Installed and started $label"
-echo "App: $app"
-echo "LaunchAgent: $plist"
-echo "Logs: $log_dir"
+if [[ "$(uname -s)" == Darwin ]]; then
+  label=com.shardul.natterwire
+  domain="gui/$(id -u)"
+  logs="$HOME/Library/Logs/natterwire"
+  plist="$HOME/Library/LaunchAgents/$label.plist"
+  mkdir -p "$logs" "$(dirname "$plist")"
+  chmod 700 "$logs"
+  # plutil escapes paths as plist strings, including spaces and XML characters.
+  cp "$root/launchd/$label.plist" "$stage/agent.plist"
+  plutil -replace ProgramArguments.0 -string "$bin/natterwire-api" "$stage/agent.plist"
+  plutil -replace StandardOutPath -string "$logs/stdout.log" "$stage/agent.plist"
+  plutil -replace StandardErrorPath -string "$logs/stderr.log" "$stage/agent.plist"
+  plutil -lint "$stage/agent.plist" >/dev/null
+  launchctl bootout "$domain/$label" 2>/dev/null || true
+  mv -f "$stage/agent.plist" "$plist"
+  launchctl bootstrap "$domain" "$plist"
+  launchctl print "$domain/$label" >/dev/null
+  echo "LaunchAgent registered. Check $logs/stderr.log and the API before assuming it is running."
+  echo "Grant Full Disk Access to $bin/natterwire-api, then restart the LaunchAgent."
+  echo "The old Swift app's permission does not transfer. See api/README.md."
+fi
+echo "Installed $bin/natterwire-api and $bin/natterwire-tui"

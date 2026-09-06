@@ -1,6 +1,6 @@
 # Natterwire TUI
 
-Linux/macOS client built with Go 1.25+ and [Go Vaxis](https://github.com/rockorager/vaxis), pinned in `go.mod`. One binary, no `curl` or native library dependency. The Mac API remains read-only: drafts cannot be sent and disappear when you quit.
+Linux/macOS client built with Go 1.25+ and [Go Vaxis](https://github.com/rockorager/vaxis), pinned in `go.mod`. One binary, no `curl` or native library dependency. The [Go API](../api/README.md) is read-only: drafts cannot be sent and disappear when you quit. Its Linux fixture workflow runs this client against real SQLite queries without a Mac.
 
 ## Run
 

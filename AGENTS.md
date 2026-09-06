@@ -1,6 +1,6 @@
-# Mac verification from orbs
+# Verification
 
-Use a live Mac runner for `swift test`. Create a runner thread and transfer a source archive that includes the orb's uncommitted changes; messages alone do not transfer files. Ask the thread to unpack into a unique temporary directory, run tests there, report the exit status and output, and clean up. Never build in or modify the Mac's shared checkout. Separate source and `.build` directories allow concurrent runs, but do not isolate user permissions or other shared Mac state. Do not install or restart the app as part of testing.
+Run `go test -race ./...` and `go vet ./...` in both `api` and `tui`. See [API fixtures and macOS limitations](api/README.md) and [TUI checks](tui/README.md#checks). Mac-only checks must use isolated source/build directories, never modify a shared checkout, and must not install or restart services without deployment authorization.
 
 # Shipping
 

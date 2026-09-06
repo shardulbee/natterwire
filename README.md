@@ -4,19 +4,19 @@
 
 # Natterwire
 
-Natterwire is a native macOS menu-bar app that exposes a read-only REST API for the local Messages database.
+Natterwire is a read-only Messages API and terminal client, both written in Go. No Swift or menu-bar app is required. The API reads the live Messages database on macOS and SQLite copies or synthetic fixtures on Linux.
 
-The [Linux terminal client](tui/README.md) uses Go and Vaxis to browse chats and compose local drafts. Sending is not supported by the API yet.
+The [terminal client](tui/README.md) browses chats and composes local drafts. Sending is not supported.
 
 ## Install
 
-Natterwire requires macOS 14 or newer, Swift 6, and Xcode command-line tools.
+Requires Go 1.25+ on Linux or macOS.
 
 ```sh
 scripts/install.sh
 ```
 
-The installer builds and signs `~/Applications/Natterwire.app` and starts the per-user `com.shardul.natterwire` LaunchAgent. Grant the app **Full Disk Access** in System Settings, then choose **Retry** from the menu-bar popover. Crashes restart automatically; **Quit** stops the app until the next login or `launchctl kickstart -k gui/$(id -u)/com.shardul.natterwire`.
+Installs `natterwire-api` and `natterwire-tui` in `~/.local/bin`. On macOS it also registers the API LaunchAgent. The Go executable needs its own Full Disk Access setup; the old app's grant does not transfer. See [API setup, migration, and Linux fixtures](api/README.md).
 
 Uninstall with `scripts/uninstall.sh`. Pass `--purge` to also remove logs.
 
@@ -31,7 +31,7 @@ GET /chats/:identifier/messages
 GET /messages/:identifier
 ```
 
-Lists return `{ "items": [...], "nextBefore": "..." }`; `limit` defaults to 50 when absent and accepts integers from 1 through 100, while `before` accepts the prior cursor. Chats follow Messages ordering: saved pins first in pin order, then unpinned chats by newest activity. Chat identifiers are URL-safe opaque encodings of Messages chat GUIDs. Natterwire uses Contacts names for direct chats and unnamed group participants when permission is available, otherwise it returns their raw handles. An unnamed group with no participants returns `Group chat`. Valid message rows whose body cannot be decoded return `text: ""` so pagination remains stable.
+Lists return `{ "items": [...], "nextBefore": "..." }`, with `nextBefore: null` at the end. `limit` defaults to 50 and accepts integers from 1 through 100; `before` accepts the prior cursor. See [the API contract](api/README.md#api-contract) for ordering, naming, and archived-body decoding.
 
 Messages include `attachments: [{ id, filename, mimeType, dataBase64 }]`, or `[]` for text-only messages. `dataBase64` contains the original file bytes as standard base64, omitted when the file is unavailable or larger than 10 MiB. Optional metadata is omitted when unknown; local paths are not returned. Attachment-only messages are included even without a text body. Base64 adds roughly 33% to file size, so use smaller pages for media-heavy chats.
 

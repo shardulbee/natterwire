@@ -65,7 +65,7 @@ func (a *app) activate(m mode) {
 
 func (a *app) refresh() { a.pendingChats, a.pendingMessages = true, a.opened != "" }
 
-// One in-flight request matches the serial Mac API. Repeated refreshes coalesce.
+// Keep one request in flight; repeated refreshes coalesce.
 // The worker owns HTTP and JSON parsing; only the event loop mutates application state.
 func (a *app) pump(ctx context.Context, client *http.Client) {
 	if a.busy {
@@ -318,7 +318,7 @@ func main() {
 	if base == "" {
 		base = "http://127.0.0.1:8741"
 	}
-	flag.StringVar(&base, "url", base, "Mac API URL")
+	flag.StringVar(&base, "url", base, "API URL")
 	demo := flag.Bool("demo", false, "use synthetic messages without a server")
 	flag.Parse()
 	if !validBase(base) || flag.NArg() != 0 {
