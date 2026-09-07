@@ -22,13 +22,14 @@ function dayLabel(value) {
   return new Intl.DateTimeFormat([], { month: 'long', day: 'numeric' }).format(date);
 }
 function messageTuple(message, chat) {
-  const text = message.text || (message.attachments?.length ? '[Attachment]' : '');
+  const text = (message.text || '').replaceAll('\ufffc', '').trim();
   return [message.isFromMe ? 'You' : message.sender || chat.name, formatTime(message.sentAt), text, message];
 }
 function previewText(message, chat) {
   const [, , text, raw] = messageTuple(message, chat);
   const sender = raw.isFromMe ? 'You: ' : raw.sender && raw.sender !== chat.name ? `${raw.sender}: ` : '';
-  return sender + text;
+  const attachment = raw.attachments?.length ? raw.attachments.some(item => item.mimeType?.startsWith('image/')) ? '[Image]' : '[Attachment]' : '';
+  return sender + (text || attachment);
 }
 async function request(path, options) {
   const response = await fetch(path, options);
@@ -103,8 +104,39 @@ function appendMessage(fragment, chat, message, extraClass = '') {
   const [sender, time, text] = message;
   const article = document.createElement('article');
   article.className = `message${sender === 'You' ? ' me' : ''}${extraClass}`;
-  const body = document.createElement('p');
-  body.textContent = text;
+  if (text) {
+    const body = document.createElement('p');
+    body.textContent = text;
+    article.append(body);
+  }
+  const attachments = message[3]?.attachments || [];
+  if (attachments.length) {
+    const media = document.createElement('div');
+    media.className = 'attachments';
+    for (const attachment of attachments) {
+      const fallback = () => {
+        const unavailable = document.createElement('span');
+        unavailable.className = 'attachment-file';
+        unavailable.textContent = attachment.filename || 'Attachment unavailable';
+        return unavailable;
+      };
+      if (attachment.mediaID && attachment.version && attachment.version !== 'missing' && (attachment.mimeType?.startsWith('image/') || attachment.width && attachment.height)) {
+        const image = document.createElement('img');
+        image.className = 'attachment-image';
+        image.alt = attachment.filename ? `Image: ${attachment.filename}` : 'Image attachment';
+        image.loading = 'lazy';
+        image.decoding = 'async';
+        if (attachment.width && attachment.height) {
+          image.width = attachment.width;
+          image.height = attachment.height;
+        }
+        image.src = `attachments/${encodeURIComponent(attachment.mediaID)}?version=${encodeURIComponent(attachment.version)}`;
+        image.onerror = () => image.replaceWith(fallback());
+        media.append(image);
+      } else media.append(fallback());
+    }
+    article.append(media);
+  }
   const head = document.createElement('div');
   head.className = 'message-head';
   if (sender !== 'You' && sender !== chat.name) {
@@ -115,7 +147,7 @@ function appendMessage(fragment, chat, message, extraClass = '') {
   const timestamp = document.createElement('time');
   timestamp.textContent = time;
   head.append(timestamp);
-  article.append(body, head);
+  article.append(head);
   fragment.append(article);
   return article;
 }
@@ -128,8 +160,10 @@ function renderMessages(chat, query = $('search').value.trim().toLowerCase()) {
     return;
   }
   const fragment = document.createDocumentFragment();
-  let day = '', match;
+  let day = '', match, displayed = 0;
   for (const message of chat.messages) {
+    if (!message[2] && !message[3]?.attachments?.length) continue;
+    displayed++;
     const nextDay = dayLabel(message[3]?.sentAt);
     if (nextDay !== day) {
       const date = document.createElement('div');
@@ -146,7 +180,7 @@ function renderMessages(chat, query = $('search').value.trim().toLowerCase()) {
     const state = attempt.state === 'sending' ? 'Sending…' : 'Not confirmed';
     appendMessage(fragment, chat, ['You', state, attempt.text], attempt.state === 'failed' ? ' failed' : ' pending');
   }
-  if (!chat.messages.length && !attempt) {
+  if (!displayed && !attempt) {
     const empty = document.createElement('div');
     empty.className = 'date';
     empty.textContent = 'No messages';

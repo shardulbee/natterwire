@@ -61,6 +61,10 @@ h1 { flex: 1; min-width: 0; font-size: 14px; margin: 0; font-weight: 500; }
 .message.me { align-self: flex-end; }
 .message p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; padding: 7px 10px; background: var(--hair); border-radius: 9px 9px 9px 3px; }
 .message.me p { background: var(--ink); color: #fff; border-radius: 9px 9px 3px 9px; }
+.attachments { display: grid; gap: 3px; overflow: hidden; border-radius: 9px; }
+.message p + .attachments { margin-top: 3px; }
+.attachment-image { display: block; width: auto; height: auto; max-width: min(100%, 420px); max-height: min(55vh, 520px); object-fit: contain; background: var(--hair); }
+.attachment-file { padding: 7px 10px; color: var(--secondary); background: var(--hair); font-size: 12px; }
 .message-head { display: flex; align-items: baseline; gap: 8px; padding: 2px 3px 0; line-height: 14px; }
 .message.me .message-head { justify-content: flex-end; }
 .message-head strong, .message-head time { font-size: 10px; color: var(--secondary); }
