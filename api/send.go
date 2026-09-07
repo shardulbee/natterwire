@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -30,6 +31,25 @@ func newSendAPI(d *database, sender func(string, string) error) *sendAPI {
 	return &sendAPI{d: d, session: rand.Text(), send: sender, attempts: make(map[string]*sendAttempt)}
 }
 
+func sameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]); forwarded != "" {
+		scheme = forwarded
+	}
+	return strings.EqualFold(u.Scheme, scheme) && strings.EqualFold(u.Host, r.Host)
+}
+
 func (s *sendAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	isSend := r.Method == "POST" && len(parts) == 3 && parts[0] == "chats" && parts[2] == "messages"
@@ -43,8 +63,8 @@ func (s *sendAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(code)
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": message, "accepted": code == 200})
 	}
-	if r.Header.Get("Origin") != "" {
-		reply(403, "browser send requests are not allowed")
+	if !sameOrigin(r) {
+		reply(403, "cross-origin browser send requests are not allowed")
 		return
 	}
 	if !isSend {

@@ -13,7 +13,7 @@ api/bin/natterwire-api --help
 api/bin/natterwire-api
 ```
 
-The service binds only to `127.0.0.1`, port 8741 by default. `--port` selects another port, not another interface. `--db` overrides `NATTERWIRE_DB_PATH`, then `MESSAGES_DB_PATH`, then `~/Library/Messages/chat.db`. It opens SQLite with `mode=ro` and `query_only`, not `immutable`, so live WAL updates remain visible. Missing databases are not created. Copies of live databases must include a consistent WAL snapshot; use SQLite's backup facility rather than copying only `chat.db` while Messages is running.
+The service embeds the browser client at `/` and binds only to `127.0.0.1`, port 8741 by default. `--port` selects another port, not another interface. `--db` overrides `NATTERWIRE_DB_PATH`, then `MESSAGES_DB_PATH`, then `~/Library/Messages/chat.db`. It opens SQLite with `mode=ro` and `query_only`, not `immutable`, so live WAL updates remain visible. Missing databases are not created. Copies of live databases must include a consistent WAL snapshot; use SQLite's backup facility rather than copying only `chat.db` while Messages is running.
 
 ## Linux fixture workflow
 
@@ -68,7 +68,9 @@ Pins load once from `~/Library/Preferences/com.apple.messages.pinning.plist`, us
 
 Reads and sends trust local processes and devices permitted by the Tailscale policy for the Mac's TCP 8741. There is no application-level authentication or credential setup. Keep the loopback bind and restrict Tailscale Serve access to intended personal devices; do not expose this API publicly.
 
-Both send routes reject browser `Origin` headers. The session nonce protects against stale retries, not unauthorized access:
+`tailscale serve --bg 8741` exposes the browser client and API together at the Mac's portless HTTPS tailnet URL. Check it with `tailscale serve status`.
+
+Both send routes accept non-browser clients and exact same-origin browser requests, including HTTPS requests forwarded by the trusted loopback proxy. Cross-origin browser requests are rejected. The session nonce protects against stale retries, not unauthorized access:
 
 1. `GET /send-session` returns `{"session":"…"}` for this API run.
 2. `POST /chats/:identifier/messages` takes `Content-Type: application/json`, `{"text":"Hello"}`, and `Idempotency-Key: SESSION:UNIQUE_RANDOM_ID`. Text must be nonblank, at most 16000 UTF-8 bytes, with no NUL. No other fields are accepted.

@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -16,6 +18,22 @@ import (
 	"syscall"
 	"time"
 )
+
+//go:embed web/index.html web/shell.css web/shell.js web/InterVariable.woff2 web/favicon.png web/apple-touch-icon.png
+var webFiles embed.FS
+
+func webHandler(api http.Handler) http.Handler {
+	assets, err := fs.Sub(webFiles, "web")
+	if err != nil {
+		panic(err)
+	}
+	mux := http.NewServeMux()
+	for _, pattern := range []string{"/attachments/", "/chats", "/chats/", "/messages/", "/send-session"} {
+		mux.Handle(pattern, api)
+	}
+	mux.Handle("/", http.FileServer(http.FS(assets)))
+	return mux
+}
 
 func (d *database) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -163,7 +181,7 @@ func main() {
 		}
 		defer d.db.Close()
 		d.nativeName = lookup
-		return serve(ctx, fmt.Sprintf("127.0.0.1:%d", *port), newSendAPI(d, sendText), ready)
+		return serve(ctx, fmt.Sprintf("127.0.0.1:%d", *port), webHandler(newSendAPI(d, sendText)), ready)
 	}
 	if flag.NFlag() == 0 && nativeApplication(run) {
 		return

@@ -4,9 +4,26 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestWebHandler(t *testing.T) {
+	api := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	handler := webHandler(api)
+	for _, tc := range []struct {
+		path, contains string
+		status         int
+	}{{"/", `id="app"`, 200}, {"/shell.js", "loadChats()", 200}, {"/chats", "", http.StatusTeapot}, {"/missing", "", 404}} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("GET", tc.path, nil))
+		if w.Code != tc.status || !strings.Contains(w.Body.String(), tc.contains) {
+			t.Errorf("GET %s: %d %q", tc.path, w.Code, w.Body.String())
+		}
+	}
+}
 
 func TestServeQuitAndPortConflict(t *testing.T) {
 	occupied, err := net.Listen("tcp", "127.0.0.1:0")

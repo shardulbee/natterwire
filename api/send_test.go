@@ -28,18 +28,26 @@ func TestSendValidationAndRouting(t *testing.T) {
 		}
 		return nil
 	})
-	for _, origin := range []string{"", "https://evil.invalid"} {
+	for _, tc := range []struct {
+		origin string
+		status int
+	}{{"", 200}, {"http://example.com", 200}, {"https://example.com", 403}, {"https://evil.invalid", 403}, {"null", 403}} {
 		r := httptest.NewRequest("GET", "/send-session", nil)
-		r.Header.Set("Origin", origin)
+		r.Header.Set("Origin", tc.origin)
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
-		if origin == "" {
-			if w.Code != 200 || !strings.Contains(w.Body.String(), s.session) {
-				t.Fatal("session unavailable without credentials")
-			}
-		} else if w.Code != 403 {
-			t.Fatal("browser session request accepted")
+		if w.Code != tc.status || tc.status == 200 && !strings.Contains(w.Body.String(), s.session) {
+			t.Fatalf("origin %q: %d %s", tc.origin, w.Code, w.Body.String())
 		}
+	}
+	proxied := httptest.NewRequest("GET", "/send-session", nil)
+	proxied.Host = "natterwire.example"
+	proxied.Header.Set("Origin", "https://natterwire.example")
+	proxied.Header.Set("X-Forwarded-Proto", "https")
+	proxiedResponse := httptest.NewRecorder()
+	s.ServeHTTP(proxiedResponse, proxied)
+	if proxiedResponse.Code != 200 {
+		t.Fatalf("same origin behind HTTPS proxy rejected: %s", proxiedResponse.Body.String())
 	}
 	body := `{"text":"hello\n\"世界\""}`
 	for _, tc := range []struct {
@@ -47,6 +55,7 @@ func TestSendValidationAndRouting(t *testing.T) {
 		status                int
 	}{
 		{"iMessage;+;weekend", s.session + ":1", body, "https://evil.invalid", 403},
+		{"iMessage;+;weekend", s.session + ":browser", body, "http://example.com", 200},
 		{"iMessage;+;weekend", "old:1", body, "", 409},
 		{"missing", s.session + ":1", body, "", 400},
 		{"iMessage;+;weekend", s.session + ":1", `{"text":" "}`, "", 400},
@@ -54,10 +63,10 @@ func TestSendValidationAndRouting(t *testing.T) {
 		{"iMessage;+;weekend", s.session + ":1", `{"text":"x"}{}`, "", 400},
 		{"iMessage;+;weekend", s.session + ":1", `{"text":"\u0000"}`, "", 400},
 		{"iMessage;+;weekend", s.session + ":1", `{"text":"` + strings.Repeat("a", 16001) + `"}`, "", 400},
-		{"iMessage;+;weekend", s.session + ":1", body, "", 200},
-		{"iMessage;+;weekend", s.session + ":1", body, "", 200},
-		{"iMessage;-;alex@example.invalid", s.session + ":1", body, "", 409},
-		{"iMessage;+;weekend", s.session + ":1", `{"text":"different"}`, "", 409},
+		{"iMessage;+;weekend", s.session + ":browser", body, "", 200},
+		{"iMessage;+;weekend", s.session + ":browser", body, "", 200},
+		{"iMessage;-;alex@example.invalid", s.session + ":browser", body, "", 409},
+		{"iMessage;+;weekend", s.session + ":browser", `{"text":"different"}`, "", 409},
 	} {
 		w := sendCall(s, tc.id, tc.key, tc.body, tc.origin)
 		if w.Code != tc.status {
