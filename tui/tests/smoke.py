@@ -210,7 +210,7 @@ def run(binary, captures):
         terminal.send("\x1b[200~ paste\njk\x1b[201~")
         terminal.expect("hello jkdu paste jk")
         terminal.send("\r")
-        terminal.expect("Not sent:")
+        terminal.expect("Not sent or unconfirmed:")
         terminal.capture(captures, "draft")
         terminal.send("\x1b")
         terminal.expect("J/K chats")

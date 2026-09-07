@@ -3,12 +3,9 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -17,11 +14,11 @@ import (
 // A new session rejects retries after restart. Never evict attempts within a
 // session: even an AppleScript error may have happened after Messages accepted it.
 type sendAPI struct {
-	d              *database
-	token, session string
-	send           func(string, string) error
-	mu             sync.Mutex
-	attempts       map[string]*sendAttempt
+	d        *database
+	session  string
+	send     func(string, string) error
+	mu       sync.Mutex
+	attempts map[string]*sendAttempt
 }
 
 type sendAttempt struct {
@@ -29,17 +26,8 @@ type sendAttempt struct {
 	Status            int
 }
 
-func newSendAPI(d *database, token string, sender func(string, string) error) *sendAPI {
-	return &sendAPI{d: d, token: token, session: rand.Text(), send: sender, attempts: make(map[string]*sendAttempt)}
-}
-
-func sendToken() string {
-	if token := os.Getenv("NATTERWIRE_SEND_TOKEN"); token != "" {
-		return strings.TrimSpace(token)
-	}
-	home, _ := os.UserHomeDir()
-	b, _ := os.ReadFile(filepath.Join(home, ".config", "natterwire", "send-token"))
-	return strings.TrimSpace(string(b))
+func newSendAPI(d *database, sender func(string, string) error) *sendAPI {
+	return &sendAPI{d: d, session: rand.Text(), send: sender, attempts: make(map[string]*sendAttempt)}
 }
 
 func (s *sendAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -55,12 +43,8 @@ func (s *sendAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(code)
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": message, "accepted": code == 200})
 	}
-	if s.token == "" {
-		reply(403, "sending disabled: configure a send token")
-		return
-	}
-	if r.Header.Get("Origin") != "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+s.token)) != 1 {
-		reply(403, "send authorization required")
+	if r.Header.Get("Origin") != "" {
+		reply(403, "browser send requests are not allowed")
 		return
 	}
 	if !isSend {

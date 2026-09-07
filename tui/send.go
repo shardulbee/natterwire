@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -19,23 +17,13 @@ type sendResult struct {
 	err     error
 }
 
-func sendToken() string {
-	if token := os.Getenv("NATTERWIRE_SEND_TOKEN"); token != "" {
-		return strings.TrimSpace(token)
-	}
-	home, _ := os.UserHomeDir()
-	b, _ := os.ReadFile(filepath.Join(home, ".config", "natterwire", "send-token"))
-	return strings.TrimSpace(string(b))
-}
-
-func postText(ctx context.Context, client *http.Client, base, token string, attempt sendRequest) sendResult {
+func postText(ctx context.Context, client *http.Client, base string, attempt sendRequest) sendResult {
 	result := sendResult{request: attempt}
 	do := func(method, path string, body []byte, value any) error {
 		r, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(base, "/")+path, bytes.NewReader(body))
 		if err != nil {
 			return err
 		}
-		r.Header.Set("Authorization", "Bearer "+token)
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("Idempotency-Key", result.request.key)
 		res, err := client.Do(r)
@@ -81,8 +69,8 @@ func (a *app) queueSend() {
 	}
 	defer func() { c.sendStatus = a.status }()
 	text := c.draft.String()
-	if a.demo || a.token == "" {
-		a.status = "Not sent: configure a send token; demo cannot send. Draft unchanged."
+	if a.demo {
+		a.status = "Not sent: demo cannot send. Draft unchanged."
 		return
 	}
 	if strings.TrimSpace(text) == "" || len(text) > 16000 {

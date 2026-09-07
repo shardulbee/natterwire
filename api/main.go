@@ -163,7 +163,7 @@ func main() {
 		}
 		defer d.db.Close()
 		d.nativeName = lookup
-		return serve(ctx, fmt.Sprintf("127.0.0.1:%d", *port), newSendAPI(d, sendToken(), sendText), ready)
+		return serve(ctx, fmt.Sprintf("127.0.0.1:%d", *port), newSendAPI(d, sendText), ready)
 	}
 	if flag.NFlag() == 0 && nativeApplication(run) {
 		return

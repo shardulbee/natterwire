@@ -19,9 +19,6 @@ func TestSendFlow(t *testing.T) {
 		t.Run(fmt.Sprint(success), func(t *testing.T) {
 			var keys []string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get("Authorization") != "Bearer secret" {
-					t.Error("missing write auth")
-				}
 				if r.URL.Path == "/send-session" {
 					fmt.Fprint(w, `{"session":"test"}`)
 					return
@@ -43,7 +40,6 @@ func TestSendFlow(t *testing.T) {
 			}))
 			defer server.Close()
 			a := newApp(server.URL, false)
-			a.token = "secret"
 			a.chats.Items = []item{{ID: "group"}, {ID: "other"}}
 			a.activate(insert)
 			c := a.current()
@@ -93,7 +89,7 @@ func TestSendFlow(t *testing.T) {
 				}
 				c.draft.SetContent("hello 👋")
 				a.queueSend()
-				retry := postText(context.Background(), server.Client(), server.URL, a.token, *a.pendingSend)
+				retry := postText(context.Background(), server.Client(), server.URL, *a.pendingSend)
 				a.acceptSend(retry)
 				if len(keys) != 2 || keys[0] == "" || keys[0] != keys[1] {
 					t.Fatal("retry changed identity")
@@ -106,7 +102,7 @@ func TestSendFlow(t *testing.T) {
 func TestSendMissingReceipt(t *testing.T) {
 	for _, body := range []string{"null", "{}", "", `{"accepted":false}`} {
 		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, body) }))
-		r := postText(context.Background(), s.Client(), s.URL, "secret", sendRequest{chat: "group", text: "hello", key: "session:key"})
+		r := postText(context.Background(), s.Client(), s.URL, sendRequest{chat: "group", text: "hello", key: "session:key"})
 		s.Close()
 		if r.err == nil || r.request.key != "session:key" {
 			t.Fatal("ambiguous reply treated as success")
@@ -126,7 +122,7 @@ func TestSendLostResponse(t *testing.T) {
 		_ = conn.Close()
 	}))
 	defer s.Close()
-	r := postText(context.Background(), s.Client(), s.URL, "secret", sendRequest{chat: "group", text: "hello", key: "session:key"})
+	r := postText(context.Background(), s.Client(), s.URL, sendRequest{chat: "group", text: "hello", key: "session:key"})
 	if r.err == nil || r.request.key != "session:key" || calls.Load() != 1 {
 		t.Fatal("lost response discarded identity or triggered automatic new send")
 	}

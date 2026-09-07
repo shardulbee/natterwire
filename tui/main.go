@@ -31,7 +31,6 @@ type conversation struct {
 }
 
 type app struct {
-	token                         string
 	pendingSend                   *sendRequest
 	sendResults                   chan sendResult
 	base                          string
@@ -48,7 +47,7 @@ type app struct {
 }
 
 func newApp(base string, demo bool) *app {
-	return &app{base: base, demo: demo, token: sendToken(), sendResults: make(chan sendResult, 1), cache: make(map[string]*conversation), pendingChats: true, responses: make(chan response, 1), media: newMediaCache()}
+	return &app{base: base, demo: demo, sendResults: make(chan sendResult, 1), cache: make(map[string]*conversation), pendingChats: true, responses: make(chan response, 1), media: newMediaCache()}
 }
 
 func (a *app) current() *conversation { return a.cache[a.opened] }
@@ -78,7 +77,7 @@ func (a *app) pump(ctx context.Context, client *http.Client) {
 		r := *a.pendingSend
 		a.pendingSend = nil
 		go func() {
-			result := postText(ctx, client, a.base, a.token, r)
+			result := postText(ctx, client, a.base, r)
 			select {
 			case a.sendResults <- result:
 			case <-ctx.Done():

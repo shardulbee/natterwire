@@ -12,7 +12,6 @@ import sys
 import tempfile
 import time
 import urllib.request
-from unittest.mock import patch
 
 from smoke import Terminal
 from PIL import Image
@@ -20,9 +19,7 @@ from PIL import Image
 
 def run(api, tui, captures):
     root = Path(__file__).resolve().parents[2]
-    # Never authorize AppleScript in integration tests, even on a developer Mac.
-    token = "integration-only" if sys.platform == "linux" else " "
-    with tempfile.TemporaryDirectory(prefix="natterwire-integration-") as tmp, patch.dict(os.environ, {"NATTERWIRE_SEND_TOKEN": token}):
+    with tempfile.TemporaryDirectory(prefix="natterwire-integration-") as tmp:
         path = Path(tmp) / "chat.db"
         with sqlite3.connect(path) as db:
             db.executescript((root / "api/testdata/messages.sql").read_text())
@@ -75,10 +72,12 @@ def run(api, tui, captures):
                 terminal.expect("Saturday at ten?")
                 terminal.expect("Sam Rivera")
                 terminal.send("iLocal draft")
-                terminal.send("\r")
-                terminal.expect("sending unsupported" if sys.platform == "linux" else "Not sent:")
-                terminal.expect("Local draft")
-                terminal.send("\r")
+                # Never invoke AppleScript from tests on a developer Mac.
+                if sys.platform == "linux":
+                    terminal.send("\r")
+                    terminal.expect("sending unsupported")
+                    terminal.send("\r")
+                    terminal.expect("sending unsupported")
                 terminal.expect("Local draft")
                 # A real WAL writer's committed update must appear without reopening the API.
                 with sqlite3.connect(path) as db:
@@ -103,7 +102,7 @@ def run(api, tui, captures):
             with socket.socket() as sock:
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 sock.bind(("127.0.0.1", port))
-    print("PASS: real Go API + TUI, archived text, names, HEIC display JPEG, chat switch, safe send failure/retry, draft, WAL refresh, shutdown")
+    print("PASS: real Go API + TUI, archived text, names, HEIC display JPEG, chat switch, draft, WAL refresh, shutdown; send failure/retry checked on Linux only")
 
 
 if __name__ == "__main__":

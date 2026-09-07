@@ -53,7 +53,7 @@ Pins load once from `~/Library/Preferences/com.apple.messages.pinning.plist`, us
 
 ## API contract
 
-- Text sending is opt-in; see [sending](#sending). The database remains read-only.
+- Text sending uses Messages.app; see [sending](#sending). The database remains read-only.
 - `GET /chats`, `GET /chats/:identifier/messages`, and alias `GET /messages/:identifier` retain the former JSON fields and URL-safe base64 chat IDs.
 - Lists return `items` and nullable `nextBefore`. Limits are 1–100, default 50. Ranked `v2` chat cursors preserve saved pin order, then newest activity and descending row ID. Legacy recency cursors still work. Message cursors use date and row ID, newest first.
 - Reactions, group actions, system items, deleted messages, and rows without a date/content are excluded when the schema supplies those fields. Archived/deleted chats are omitted from the chat list. As before, a known identifier can still query their messages.
@@ -66,9 +66,9 @@ Pins load once from `~/Library/Preferences/com.apple.messages.pinning.plist`, us
 
 ## Sending
 
-Set the same private random token on the Mac API and TUI machines in `~/.config/natterwire/send-token`, with directory mode 700 and file mode 600. Generate it once with `openssl rand -hex 32` and transfer it securely, not through chat or Git. `NATTERWIRE_SEND_TOKEN` overrides the file. Finder-launched Natterwire reads the file at startup. No token means sends are disabled; existing reads remain unauthenticated. Use only loopback or a trusted encrypted Tailscale connection, preferably HTTPS. Do not expose this API publicly.
+Reads and sends trust local processes and devices permitted by the Tailscale policy for the Mac's TCP 8741. There is no application-level authentication or credential setup. Keep the loopback bind and restrict Tailscale Serve access to intended personal devices; do not expose this API publicly.
 
-Both send routes require `Authorization: Bearer TOKEN` and reject browser `Origin` headers:
+Both send routes reject browser `Origin` headers. The session nonce protects against stale retries, not unauthorized access:
 
 1. `GET /send-session` returns `{"session":"…"}` for this API run.
 2. `POST /chats/:identifier/messages` takes `Content-Type: application/json`, `{"text":"Hello"}`, and `Idempotency-Key: SESSION:UNIQUE_RANDOM_ID`. Text must be nonblank, at most 16000 UTF-8 bytes, with no NUL. No other fields are accepted.
