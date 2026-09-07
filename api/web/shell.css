@@ -11,7 +11,7 @@
 #app:has(.chat:nth-child(6n+5)[aria-current="true"]) { --ink: #70428c; }
 #app:has(.chat:nth-child(6n)[aria-current="true"]) { --ink: #a43f4b; }
 #app { --accent: color-mix(in srgb, var(--ink, var(--fg)) 80%, var(--fg)); }
-html, body { background: var(--bg); color: var(--fg); }
+html, body { background: var(--bg); color: var(--fg); overscroll-behavior-x: none; }
 html { -webkit-font-smoothing: antialiased; }
 body { margin: 0; overflow: hidden; font: 14px/20px Inter, system-ui, sans-serif; }
 button, input, textarea { font: inherit; }

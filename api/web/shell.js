@@ -375,6 +375,18 @@ $('transcript').onpointerup = event => {
   swipe = null;
 };
 $('transcript').onpointercancel = () => { swipe = null; };
+let trackpadX = 0, trackpadTimer;
+$('app').addEventListener('wheel', event => {
+  if (!mobile.matches || !document.body.classList.contains('chat-open') || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
+  event.preventDefault();
+  trackpadX += event.deltaX;
+  clearTimeout(trackpadTimer);
+  if (Math.abs(trackpadX) > 80) {
+    trackpadX = 0;
+    showIndex();
+  }
+  trackpadTimer = setTimeout(() => { trackpadX = 0; }, 200);
+}, { passive: false });
 $('draft').oninput = () => { if (selected >= 0) drafts.set(conversations[selected].id, $('draft').value); updateComposer(); };
 $('send').onclick = sendDraft;
 $('close-help').onclick = () => $('shortcuts').close();

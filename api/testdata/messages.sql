@@ -17,7 +17,7 @@ INSERT INTO handle VALUES (1, 'alex@example.invalid'), (2, '+1 (415) 555-0100'),
 INSERT INTO chat_handle_join VALUES (1,1), (2,1), (2,2), (2,3), (2,1), (3,2);
 INSERT INTO message VALUES
  (1, 'first', 'Hello from the fixture 👋', NULL, 800000000000000000, 0, 1, 'iMessage', 0, 0, 0, 0),
- (2, 'second', 'A local draft cannot be sent yet.', NULL, 800000001000000000, 1, NULL, 'iMessage', 0, 0, 0, 0),
+ (2, 'second', 'Sent from the fixture.', NULL, 800000001000000000, 1, NULL, 'iMessage', 0, 0, 0, 0),
  (3, 'archived-body', NULL, X'040b73747265616d747970656481e803840140848484124e5341747472696275746564537472696e67008484084e534f626a656374008592848484084e53537472696e67019484012b104172636869766564206d65737361676586840269490110928484840c4e5344696374696f6e6172790094840169008686', 800000002000000000, 0, 1, 'iMessage', 0, 0, 0, 0),
  (4, 'reaction', 'Liked a message', NULL, 900000000000000000, 0, 1, 'iMessage', 0, 0, 2000, 0),
  (5, 'action', 'Joined', NULL, 900000000000000000, 0, 1, 'iMessage', 0, 1, 0, 0),
