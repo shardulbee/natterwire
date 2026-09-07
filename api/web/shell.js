@@ -48,7 +48,7 @@ async function loadPreview(index) {
   if (chat.previewLoaded || chat.messages) return;
   chat.previewLoaded = true;
   try {
-    const page = await request(`/chats/${encodeURIComponent(chat.id)}/messages?limit=1&media=metadata`);
+    const page = await request(`chats/${encodeURIComponent(chat.id)}/messages?limit=1&media=metadata`);
     if (page.items[0]) chat.preview = previewText(page.items[0], chat);
     updateChat(index);
   } catch {
@@ -80,7 +80,7 @@ async function loadChats() {
   $('count').hidden = false;
   $('count').textContent = 'Loading conversations…';
   try {
-    const page = await request('/chats?limit=100');
+    const page = await request('chats?limit=100');
     conversations = page.items.map(chat => ({ id: chat.id, name: chat.displayName, preview: '', time: formatTime(chat.lastMessageAt), messages: null }));
     buildChats();
     $('count').hidden = conversations.length > 0;
@@ -93,7 +93,7 @@ async function loadChats() {
 async function loadMessages(chat) {
   if (chat.messages) return;
   chat.previewLoaded = true;
-  const page = await request(`/chats/${encodeURIComponent(chat.id)}/messages?limit=100&media=metadata`);
+  const page = await request(`chats/${encodeURIComponent(chat.id)}/messages?limit=100&media=metadata`);
   chat.messages = page.items.slice().reverse().map(message => messageTuple(message, chat));
   if (page.items[0]) chat.preview = previewText(page.items[0], chat);
   updateChat(conversations.indexOf(chat));
@@ -191,11 +191,11 @@ async function sendDraft() {
   $('status').textContent = '';
   try {
     if (!attempt.key) {
-      if (!sendSession) sendSession = (await request('/send-session')).session;
+      if (!sendSession) sendSession = (await request('send-session')).session;
       if (!sendSession) throw new Error('Missing send session');
       attempt.key = `${sendSession}:${crypto.randomUUID()}`;
     }
-    const receipt = await request(`/chats/${encodeURIComponent(chat.id)}/messages`, {
+    const receipt = await request(`chats/${encodeURIComponent(chat.id)}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Idempotency-Key': attempt.key },
       body: JSON.stringify({ text: attempt.text }),

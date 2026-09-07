@@ -16,7 +16,7 @@ func TestWebHandler(t *testing.T) {
 	for _, tc := range []struct {
 		path, contains string
 		status         int
-	}{{"/", `id="app"`, 200}, {"/shell.js", "loadChats()", 200}, {"/chats", "", http.StatusTeapot}, {"/missing", "", 404}} {
+	}{{"/", `id="app"`, 200}, {"/shell.js", "loadChats()", 200}, {"/chats", "", http.StatusTeapot}, {"/natterwire/", `id="app"`, 200}, {"/natterwire/shell.js", "loadChats()", 200}, {"/natterwire/chats", "", http.StatusTeapot}, {"/missing", "", 404}} {
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, httptest.NewRequest("GET", tc.path, nil))
 		if w.Code != tc.status || !strings.Contains(w.Body.String(), tc.contains) {

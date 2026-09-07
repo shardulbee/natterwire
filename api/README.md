@@ -68,7 +68,7 @@ Pins load once from `~/Library/Preferences/com.apple.messages.pinning.plist`, us
 
 Reads and sends trust local processes and devices permitted by the Tailscale policy for the Mac's TCP 8741. There is no application-level authentication or credential setup. Keep the loopback bind and restrict Tailscale Serve access to intended personal devices; do not expose this API publicly.
 
-`tailscale serve --bg 8741` exposes the browser client and API together at the Mac's portless HTTPS tailnet URL. Check it with `tailscale serve status`.
+`tailscale serve --bg --set-path=/natterwire 8741` exposes the browser client and API together at `/natterwire/` on the Mac's portless HTTPS tailnet URL. Check it with `tailscale serve status`.
 
 Both send routes accept non-browser clients and exact same-origin browser requests, including HTTPS requests forwarded by the trusted loopback proxy. Cross-origin browser requests are rejected. The session nonce protects against stale retries, not unauthorized access:
 
