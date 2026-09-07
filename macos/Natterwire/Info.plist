@@ -28,5 +28,7 @@
     <string>13.0</string>
     <key>NSContactsUsageDescription</key>
     <string>Natterwire uses Contacts to show names for message participants.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Natterwire sends text messages to your existing conversations through Messages.</string>
 </dict>
 </plist>

@@ -4,9 +4,9 @@
 
 # Natterwire
 
-Natterwire is a read-only Messages API and terminal client, both written in Go. On macOS the API is packaged as `Natterwire.app` with a fox menu for opening its status and permissions window or quitting, and no Dock icon. The API reads the live Messages database on macOS and SQLite copies or synthetic fixtures on Linux.
+Natterwire is a Messages API and terminal client, both written in Go. On macOS the API is packaged as `Natterwire.app` with a fox menu for opening its status and permissions window or quitting, and no Dock icon. The API reads the live Messages database on macOS and SQLite copies or synthetic fixtures on Linux.
 
-The [terminal client](tui/README.md) browses chats and composes local drafts. Sending is not supported.
+The [terminal client](tui/README.md) browses chats and sends text to existing conversations through Messages.app after [send-token setup](api/README.md#sending).
 
 ## Install
 
@@ -43,4 +43,4 @@ curl 'http://127.0.0.1:8741/chats?limit=20'
 
 ## Security
 
-Natterwire opens `chat.db` read-only and never sends or modifies Messages data. It binds only to loopback; local processes can access the API. Tailscale Serve provides remote tailnet access, so restrict TCP 8741 to intended devices in the tailnet policy. Never use a LAN bind or Tailscale Funnel.
+Natterwire opens `chat.db` read-only. Optional text sending uses AppleScript and requires a separate bearer token; reads remain unauthenticated. It binds only to loopback; local processes can access the read API. Tailscale Serve provides remote tailnet access, so restrict TCP 8741 to intended devices in the tailnet policy. Never use a LAN bind or Tailscale Funnel.

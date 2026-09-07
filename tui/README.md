@@ -1,6 +1,6 @@
 # Natterwire TUI
 
-Linux/macOS client built with Go 1.25+ and [Go Vaxis](https://github.com/rockorager/vaxis), pinned in `go.mod`. One binary, no `curl` or native library dependency. The [Go API](../api/README.md) is read-only: drafts cannot be sent and disappear when you quit. Its Linux fixture workflow runs this client against real SQLite queries without a Mac.
+Linux/macOS client built with Go 1.25+ and [Go Vaxis](https://github.com/rockorager/vaxis), pinned in `go.mod`. One binary, no `curl` or native library dependency. The [Go API](../api/README.md#sending) sends text to existing conversations through Messages on a Mac while keeping SQLite read-only. Drafts disappear when you quit. The Linux fixture workflow runs this client against real SQLite queries without a Mac.
 
 ## Run
 
@@ -28,11 +28,13 @@ Use `GOARCH=arm64` and a different output directory for ARM Linux.
 | --- | --- |
 | Sidebar | `j/k` scroll transcript lines, `J/K` switch chats, Ctrl+D/Ctrl+U scroll half-pages, `G` jumps to latest |
 | Sidebar | `i` opens the draft, `n` loads more chats into the sidebar, `o` loads older messages in the current chat |
-| Insert | Type normally, Esc returns to sidebar; Enter explains why sending is unavailable |
+| Insert | Type normally, Esc returns to sidebar; Enter sends text when a send token is configured |
 | Outside insert | `r` refreshes chats and open transcript, `q` quits |
 | Anywhere | Ctrl+L repaints, Ctrl+C quits |
 
 Requires at least 60 columns by 14 rows. Focus stays on the sidebar except while composing. Up/Down switch chats; PageUp/PageDown scroll transcript half-pages; End jumps to latest. Color indicates focus; `>` marks the open chat. Selecting a chat displays its cached transcript immediately while refreshing in the background; uncached chats need an initial fetch. Switching chats resets to the bottom; drafts survive switches within the running session. The empty composer stays hidden until insert mode.
+
+Configure the shared token as described in [API sending](../api/README.md#sending). Enter submits asynchronously and repeated Enter presses cannot duplicate a pending send. The pending draft is locked against edits. Acceptance clears only that conversation's submitted draft and refreshes the API, without adding a pretend delivered message. Failures retain the draft and request ID; Enter retries that same request. An unresolved send blocks sending edited text. Check Messages before restarting the TUI to discard an unresolved attempt. API restarts reject old request IDs. Demo mode never sends.
 
 Images display through Kitty graphics, fitted to the chat area without fixed thumbnails or colored blocks. Other terminals show `[Image: filename]` and fetch no media. The TUI requests metadata-only message pages and loads visible images plus nearby rows on a separate worker. PNG, JPEG, GIF (first frame), WebP, and HEIC are supported; the binary attachment endpoint supplies full-resolution oriented JPEG for HEIC. This requires the metadata/binary API. The decoder rejects images over 32 megapixels.
 

@@ -53,6 +53,7 @@ Pins load once from `~/Library/Preferences/com.apple.messages.pinning.plist`, us
 
 ## API contract
 
+- Text sending is opt-in; see [sending](#sending). The database remains read-only.
 - `GET /chats`, `GET /chats/:identifier/messages`, and alias `GET /messages/:identifier` retain the former JSON fields and URL-safe base64 chat IDs.
 - Lists return `items` and nullable `nextBefore`. Limits are 1–100, default 50. Ranked `v2` chat cursors preserve saved pin order, then newest activity and descending row ID. Legacy recency cursors still work. Message cursors use date and row ID, newest first.
 - Reactions, group actions, system items, deleted messages, and rows without a date/content are excluded when the schema supplies those fields. Archived/deleted chats are omitted from the chat list. As before, a known identifier can still query their messages.
@@ -62,6 +63,21 @@ Pins load once from `~/Library/Preferences/com.apple.messages.pinning.plist`, us
 - `media=metadata` omits inline bytes and supplies opaque `mediaID`, file `version`, and oriented image dimensions. `GET /attachments/:mediaID?version=...` returns display bytes, with a 32 MiB limit and 128 MiB LRU cache. Missing images return 404, stale or omitted versions 409, oversized images 413. At most two media requests run concurrently; excess requests return 503 without blocking metadata requests.
 - HEIC display JPEGs use `displayDataBase64`, preserving full resolution and HEIF rotation/mirroring. The embedded WASM decoder runs on Linux and macOS without a native library. Images over 32 megapixels or unsupported images omit the display copy. EXIF-only orientation without HEIF transform properties is not applied; live Apple image parity remains unverified.
 - JPEG EXIF orientation is applied to binary display images and advertised dimensions. Original inline bytes remain unchanged.
+
+## Sending
+
+Set the same private random token on the Mac API and TUI machines in `~/.config/natterwire/send-token`, with directory mode 700 and file mode 600. Generate it once with `openssl rand -hex 32` and transfer it securely, not through chat or Git. `NATTERWIRE_SEND_TOKEN` overrides the file. Finder-launched Natterwire reads the file at startup. No token means sends are disabled; existing reads remain unauthenticated. Use only loopback or a trusted encrypted Tailscale connection, preferably HTTPS. Do not expose this API publicly.
+
+Both send routes require `Authorization: Bearer TOKEN` and reject browser `Origin` headers:
+
+1. `GET /send-session` returns `{"session":"…"}` for this API run.
+2. `POST /chats/:identifier/messages` takes `Content-Type: application/json`, `{"text":"Hello"}`, and `Idempotency-Key: SESSION:UNIQUE_RANDOM_ID`. Text must be nonblank, at most 16000 UTF-8 bytes, with no NUL. No other fields are accepted.
+
+A 200 response with `{"accepted":true,"error":""}` means the AppleScript command completed, not that the message was delivered. The Mac runs `/usr/bin/osascript` against an existing Messages chat whose ID exactly matches the database GUID. Missing or ambiguous matches fail, with no fallback to recipients or new chats. Linux returns an explicit unsupported error and never simulates delivery.
+
+Retain the same request ID and text for every retry. Concurrent duplicates return 409 while pending; completed duplicates replay the result without invoking Messages again. Failures and timeouts may be ambiguous and are retained too. Old sessions are rejected after API restart. Each session allows 10000 attempts without eviction. This is not durable delivery tracking: after losing a request ID, check Messages before making another request. Never automatically retry with a new ID.
+
+The signed app includes an Automation usage description. Allow Natterwire to control Messages when macOS prompts, or check Privacy & Security → Automation. The current app is not sandboxed or hardened-runtime signed, so no new entitlement is required. Actual AppleScript ID parity for direct and group chats, permission attribution to the signed app, denial handling, and delivery must be checked on macOS with explicit authorization. Orbs support the real read API, SQLite fixtures, fake-sender endpoint tests, and TUI checks, not AppleScript delivery.
 
 ## Tests
 

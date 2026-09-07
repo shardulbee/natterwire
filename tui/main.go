@@ -25,9 +25,15 @@ type conversation struct {
 	draft         *textinput.Model
 	name, failure string
 	loaded        bool
+	sending       bool
+	sendStatus    string
+	attempt       *sendRequest
 }
 
 type app struct {
+	token                         string
+	pendingSend                   *sendRequest
+	sendResults                   chan sendResult
 	base                          string
 	demo, busy                    bool
 	chats                         page
@@ -42,7 +48,7 @@ type app struct {
 }
 
 func newApp(base string, demo bool) *app {
-	return &app{base: base, demo: demo, cache: make(map[string]*conversation), pendingChats: true, responses: make(chan response, 1), media: newMediaCache()}
+	return &app{base: base, demo: demo, token: sendToken(), sendResults: make(chan sendResult, 1), cache: make(map[string]*conversation), pendingChats: true, responses: make(chan response, 1), media: newMediaCache()}
 }
 
 func (a *app) current() *conversation { return a.cache[a.opened] }
@@ -56,7 +62,7 @@ func (a *app) activate(m mode) {
 		a.cache[c.ID] = &conversation{name: c.DisplayName, draft: textinput.New(), layout: layout{dirty: true, following: true}}
 	}
 	if a.opened != c.ID {
-		a.opened, a.status = c.ID, ""
+		a.opened, a.status = c.ID, a.cache[c.ID].sendStatus
 		a.current().bottom()
 		a.pendingMessages, a.olderMessages = true, false
 	}
@@ -68,6 +74,17 @@ func (a *app) refresh() { a.pendingChats, a.pendingMessages = true, a.opened != 
 // Keep one request in flight; repeated refreshes coalesce.
 // The worker owns HTTP and JSON parsing; only the event loop mutates application state.
 func (a *app) pump(ctx context.Context, client *http.Client) {
+	if a.pendingSend != nil {
+		r := *a.pendingSend
+		a.pendingSend = nil
+		go func() {
+			result := postText(ctx, client, a.base, a.token, r)
+			select {
+			case a.sendResults <- result:
+			case <-ctx.Done():
+			}
+		}()
+	}
 	if a.busy {
 		return
 	}
@@ -145,7 +162,7 @@ func (a *app) key(k vaxis.Key) bool {
 	}
 	c := a.current()
 	if k.EventType == vaxis.EventPaste {
-		if a.mode == insert && c != nil {
+		if a.mode == insert && c != nil && !c.sending {
 			k.Text = clean(k.Text, false)
 			if k.Matches(vaxis.KeyEnter) || k.Matches(vaxis.KeyTab) || k.Matches('j', vaxis.ModCtrl) {
 				k.Text = " "
@@ -168,9 +185,11 @@ func (a *app) key(k vaxis.Key) bool {
 		case "Escape":
 			a.mode = sidebar
 		case "Enter":
-			a.status = "Not sent: the API has no send endpoint. Your draft is unchanged."
+			a.queueSend()
 		default:
-			c.draft.Update(k)
+			if c != nil && !c.sending {
+				c.draft.Update(k)
+			}
 		}
 		return true
 	}
@@ -267,6 +286,7 @@ func run(base string, demo bool) error {
 			select {
 			case event = <-vx.Events():
 			case event = <-a.responses:
+			case event = <-a.sendResults:
 			case event = <-a.media.results:
 			case <-timer.C:
 				a.refresh()
@@ -282,6 +302,8 @@ func run(base string, demo bool) error {
 			e()
 		case response:
 			a.accept(e)
+		case sendResult:
+			a.acceptSend(e)
 		case mediaResult:
 			a.media.accept(vx, e)
 		case vaxis.PasteEndEvent:
