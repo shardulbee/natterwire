@@ -7,6 +7,53 @@ let buttons = [];
 let visible = [];
 let selected = -1;
 let sendSession = '';
+const mediaQueue = [];
+let mediaLoading = 0;
+
+function loadQueuedMedia() {
+  while (mediaLoading < 2 && mediaQueue.length) {
+    const item = mediaQueue.shift();
+    if (!item.frame.isConnected) continue;
+    mediaLoading++;
+    const done = loaded => {
+      mediaLoading--;
+      if (loaded) {
+        item.frame.disabled = false;
+        item.frame.onclick = () => openImage(item.image);
+      } else if (item.tries++ < 3 && item.frame.isConnected) {
+        setTimeout(() => { mediaQueue.push(item); loadQueuedMedia(); }, item.tries * 400);
+      } else if (item.frame.isConnected) {
+        if (item.pluginPayload) {
+          const article = item.frame.closest('.message');
+          item.frame.remove();
+          if (!article.querySelector('p, .attachment-frame, .attachment-file')) article.remove();
+        } else {
+          const fallback = document.createElement('span');
+          fallback.className = 'attachment-file';
+          fallback.textContent = item.filename || 'Attachment unavailable';
+          item.frame.replaceChildren(fallback);
+        }
+      }
+      loadQueuedMedia();
+    };
+    item.image.onload = () => done(true);
+    item.image.onerror = () => done(false);
+    item.image.src = `${item.url}${item.tries ? `&retry=${item.tries}` : ''}`;
+  }
+}
+const mediaObserver = new IntersectionObserver(entries => {
+  for (const entry of entries) if (entry.isIntersecting) {
+    mediaObserver.unobserve(entry.target);
+    mediaQueue.push(entry.target.mediaItem);
+    loadQueuedMedia();
+  }
+}, { root: $('transcript'), rootMargin: '500px' });
+
+function openImage(image) {
+  $('lightbox').sourceFrame = image.parentNode;
+  $('lightbox-image').append(image);
+  $('lightbox').showModal();
+}
 
 function formatTime(value) {
   if (!value) return '';
@@ -26,13 +73,13 @@ function messageTuple(message, chat) {
   return [message.isFromMe ? 'You' : message.sender || chat.name, formatTime(message.sentAt), text, message];
 }
 function visibleAttachments(message) {
-  return (message.attachments || []).filter(item => !item.filename?.endsWith('.pluginPayloadAttachment'));
+  return (message.attachments || []).filter(item => !item.filename?.toLowerCase().endsWith('.pluginpayloadattachment') || item.mediaID && item.version && item.version !== 'missing' && item.width > 0 && item.height > 0 && Math.max(item.width, item.height) >= 256);
 }
 function previewText(message, chat) {
   const [, , text, raw] = messageTuple(message, chat);
   const sender = raw.isFromMe ? 'You: ' : raw.sender && raw.sender !== chat.name ? `${raw.sender}: ` : '';
   const attachments = visibleAttachments(raw);
-  const attachment = attachments.length ? attachments.some(item => item.mimeType?.startsWith('image/')) ? '[Image]' : '[Attachment]' : '';
+  const attachment = attachments.length ? attachments.some(item => item.mimeType?.startsWith('image/') || item.width > 0 && item.height > 0) ? '[Image]' : '[Attachment]' : '';
   return sender + (text || attachment);
 }
 async function request(path, options) {
@@ -145,21 +192,27 @@ function appendMessage(fragment, chat, message, extraClass = '') {
         return unavailable;
       };
       if (attachment.mediaID && attachment.version && attachment.version !== 'missing' && (attachment.mimeType?.startsWith('image/') || attachment.width && attachment.height)) {
-        const frame = document.createElement('div');
+        const frame = document.createElement('button');
+        frame.type = 'button';
         frame.className = 'attachment-frame';
-        if (attachment.width && attachment.height) frame.style.aspectRatio = `${attachment.width} / ${attachment.height}`;
+        frame.disabled = true;
+        frame.setAttribute('aria-label', attachment.filename ? `Open image: ${attachment.filename}` : 'Open image');
+        if (attachment.width && attachment.height) {
+          const ratio = attachment.width / attachment.height;
+          frame.style.aspectRatio = `${attachment.width} / ${attachment.height}`;
+          frame.style.width = `min(420px, ${ratio * 55}vh, ${ratio * 520}px)`;
+        }
         const image = document.createElement('img');
         image.className = 'attachment-image';
         image.alt = attachment.filename ? `Image: ${attachment.filename}` : 'Image attachment';
-        image.loading = 'lazy';
         image.decoding = 'async';
         if (attachment.width && attachment.height) {
           image.width = attachment.width;
           image.height = attachment.height;
         }
-        image.src = `attachments/${encodeURIComponent(attachment.mediaID)}?version=${encodeURIComponent(attachment.version)}`;
-        image.onerror = () => frame.replaceChildren(fallback());
         frame.append(image);
+        frame.mediaItem = { frame, image, filename: attachment.filename, pluginPayload: attachment.filename?.toLowerCase().endsWith('.pluginpayloadattachment'), url: `attachments/${encodeURIComponent(attachment.mediaID)}?version=${encodeURIComponent(attachment.version)}`, tries: 0 };
+        mediaObserver.observe(frame);
         media.append(frame);
       } else media.append(fallback());
     }
@@ -330,6 +383,13 @@ $('transcript').onpointercancel = () => { swipe = null; };
 $('draft').oninput = () => { if (selected >= 0) drafts.set(conversations[selected].id, $('draft').value); updateComposer(); };
 $('send').onclick = sendDraft;
 $('close-help').onclick = () => $('shortcuts').close();
+$('close-lightbox').onclick = () => $('lightbox').close();
+$('lightbox').onclick = event => { if (event.target === $('lightbox')) $('lightbox').close(); };
+$('lightbox').onclose = () => {
+  const frame = $('lightbox').sourceFrame;
+  if (frame) frame.append($('lightbox-image').firstElementChild);
+  $('lightbox').sourceFrame = null;
+};
 function openSearch() {
   if (mobile.matches) showIndex();
   $('search-panel').classList.add('is-open');
@@ -371,7 +431,7 @@ function filterChats() {
   $('count').textContent = visible.length ? '' : 'No conversations found';
 }
 document.addEventListener('keydown', event => {
-  if (event.isComposing || $('shortcuts').open) return;
+  if (event.isComposing || $('shortcuts').open || $('lightbox').open) return;
   const input = event.target.matches('input, textarea');
   if (event.key === 'Escape') {
     if (!$('search').disabled) closeSearch();
