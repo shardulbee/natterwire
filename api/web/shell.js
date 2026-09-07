@@ -132,7 +132,7 @@ async function loadChats() {
   $('count').hidden = false;
   $('count').textContent = 'Loading conversations…';
   try {
-    const page = await request('chats?limit=100');
+    const page = await request('chats?limit=100&sort=latest');
     conversations = page.items.map(chat => ({ id: chat.id, name: chat.displayName, preview: '', time: formatTime(chat.lastMessageAt), messages: null }));
     buildChats();
     $('count').hidden = conversations.length > 0;
@@ -152,14 +152,10 @@ async function loadMessages(chat, refresh = false) {
   const accepted = chat.messages?.filter(message => message[3]?.localAccepted) || [];
   const messages = page.items.slice().reverse().map(message => messageTuple(message, chat));
   const matched = new Set();
-  let confirmed = false;
   for (const local of accepted) {
     const sentAt = new Date(local[3].sentAt).getTime();
     const match = messages.find(message => !matched.has(message[3].id) && message[3].isFromMe && message[2] === local[2].trim() && Math.abs(new Date(message[3].sentAt).getTime() - sentAt) < 120000);
-    if (match) {
-      matched.add(match[3].id);
-      confirmed = true;
-    }
+    if (match) matched.add(match[3].id);
     else messages.push(local);
   }
   chat.messages = messages.sort((a, b) => new Date(a[3]?.sentAt) - new Date(b[3]?.sentAt));
@@ -168,7 +164,6 @@ async function loadMessages(chat, refresh = false) {
   if (conversations[selected] === chat) {
     renderMessages(chat);
     if (preserveScroll) transcript.scrollTop = transcript.scrollHeight - bottomOffset;
-    if (confirmed) $('status').textContent = chat.messages.some(message => message[3]?.localAccepted) ? 'Accepted by Messages · delivery unconfirmed' : 'Confirmed in Messages';
   }
 }
 function appendMessage(fragment, chat, message, extraClass = '') {
@@ -316,8 +311,8 @@ async function sendDraft() {
       body: JSON.stringify({ text: attempt.text }),
     });
     if (!receipt.accepted) throw new Error('Missing acceptance receipt');
-    $('status').textContent = 'Accepted by Messages · delivery unconfirmed';
-    chat.messages.push(['You', 'Accepted', attempt.text, { isFromMe: true, sentAt: attempt.sentAt, localAccepted: true }]);
+    $('status').textContent = '';
+    chat.messages.push(['You', '', attempt.text, { isFromMe: true, sentAt: attempt.sentAt, localAccepted: true }]);
     chat.preview = `You: ${attempt.text}`;
     chat.time = formatTime(attempt.sentAt);
     updateChat(conversations.indexOf(chat));
@@ -462,7 +457,7 @@ document.addEventListener('keydown', event => {
     if (chat) {
       $('status').textContent = 'Refreshing…';
       loadMessages(chat, true).then(() => {
-        if (conversations[selected] === chat && !$('status').textContent.startsWith('Confirmed')) $('status').textContent = '';
+        if (conversations[selected] === chat) $('status').textContent = '';
       }).catch(error => { if (conversations[selected] === chat) $('status').textContent = error.message; });
     }
   }
