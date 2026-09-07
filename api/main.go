@@ -32,10 +32,7 @@ func webHandler(api http.Handler) http.Handler {
 		mux.Handle(pattern, api)
 	}
 	mux.Handle("/", http.FileServer(http.FS(assets)))
-	root := http.NewServeMux()
-	root.Handle("/natterwire/", http.StripPrefix("/natterwire", mux))
-	root.Handle("/", mux)
-	return root
+	return mux
 }
 
 func (d *database) ServeHTTP(w http.ResponseWriter, r *http.Request) {
