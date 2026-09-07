@@ -223,7 +223,7 @@ func dateString(raw int64) *string {
 	return &s
 }
 
-func (d *database) chats(ctx context.Context, limit int, before *string) (Page[Chat], error) {
+func (d *database) chats(ctx context.Context, limit int, before *string, latest bool) (Page[Chat], error) {
 	page := Page[Chat]{Items: []Chat{}}
 	c, err := parseCursor(before, true)
 	if err != nil {
@@ -237,7 +237,7 @@ func (d *database) chats(ctx context.Context, limit int, before *string) (Page[C
 		}
 	}
 	pinExpr := "0"
-	if len(pinCols) > 0 && len(d.pins) > 0 {
+	if !latest && len(pinCols) > 0 && len(d.pins) > 0 {
 		pinExpr = "CASE "
 		for i, p := range d.pins {
 			pinExpr += fmt.Sprintf("WHEN %s THEN %d ", strings.Join(pinCols, " OR "), i)

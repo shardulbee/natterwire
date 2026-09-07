@@ -71,7 +71,7 @@ def run(binary, captures):
         assert "\ufffc" not in terminal.text()
         assert not image_cells(terminal), "Non-Kitty terminal must show filenames only"
         terminal.capture(captures, "images")
-        terminal.send("jjjkkk")
+        terminal.send("\x04\x15")
         terminal.resize(70, 18)
         terminal.read(0.5)
         assert not image_cells(terminal)
@@ -82,11 +82,11 @@ def run(binary, captures):
         assert all(y < 13 for _, y in image_cells(terminal)), "Preview overwrote composer"
         terminal.capture(captures, "images-draft")
         terminal.send("\x1b")
-        terminal.send("J")
+        terminal.send("j")
         terminal.expect("No images in this chat.")
         assert not image_cells(terminal), "Image cells leaked into another chat"
         terminal.resize(110, 32)
-        terminal.send("K")
+        terminal.send("k")
         terminal.expect("[Image: natterwire.png]")
         assert not image_cells(terminal), "Cached image used a non-Kitty renderer"
         terminal.send("r")
@@ -176,16 +176,16 @@ def run_kitty(binary, captures):
             assert b"\x1b_Ga=d,d=I," not in scroll_output, "Scroll destroyed cached image data"
             assert re.search(rb"a=p,[^;]*x=\d+,y=\d+,w=\d+,h=\d+", scroll_output), "Missing native crop command"
             for i in range(60):
-                remote("send-text", "k" if i % 2 == 0 else "j")
+                remote("send-text", "\x04" if i % 2 == 0 else "\x15")
             remote("send-text", "i")
             expect("Draft")
             capture("kitty-draft")
             remote("send-text", "\x1b")
             time.sleep(0.2)
-            remote("send-text", "J")
+            remote("send-text", "j")
             expect("No images in this chat.")
             capture("kitty-text-only", False)
-            remote("send-text", "K")
+            remote("send-text", "k")
             expect("[Attachment: notes.pdf]")
             capture("kitty-reopened")
             window = subprocess.check_output(["xdotool", "search", "--pid", str(process.pid)]).decode().splitlines()[-1]
@@ -210,7 +210,7 @@ def run_kitty(binary, captures):
                 count = int(rest)
                 chunk = streams[kind][offsets[kind]:offsets[kind] + count]
                 offsets[kind] += count
-                if kind == "I" and chunk in (b"j", b"k"):
+                if kind == "I" and chunk in (b"\x04", b"\x15"):
                     assert started is None, "Scroll inputs overlapped before a frame completed"
                     started = elapsed
                 elif kind == "O":

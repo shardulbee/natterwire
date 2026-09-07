@@ -174,10 +174,8 @@ func (a *app) key(k vaxis.Key) bool {
 		return false
 	}
 	s := k.String()
-	for _, key := range "GJK" {
-		if k.Matches(key) {
-			s = string(key)
-		}
+	if k.Matches('G') {
+		s = "G"
 	}
 	if a.mode == insert {
 		switch s {
@@ -206,36 +204,31 @@ func (a *app) key(k vaxis.Key) bool {
 		if c != nil {
 			a.mode = insert
 		}
-	case "J", "Down", "K", "Up":
+	case "j", "Down", "k", "Up":
 		previous := a.selected
-		if s == "J" || s == "Down" {
+		if s == "j" || s == "Down" {
 			a.selected = min(a.selected+1, max(0, len(a.chats.Items)-1))
+			if a.selected == len(a.chats.Items)-1 {
+				a.moreChats = a.chats.NextBefore != ""
+			}
 		} else {
 			a.selected = max(0, a.selected-1)
 		}
 		if previous != a.selected {
 			a.activate(sidebar)
 		}
-	case "n":
-		a.moreChats = a.chats.NextBefore != ""
 	default:
 		if c != nil {
 			switch s {
-			case "j":
-				c.scroll(1)
-			case "k":
-				c.scroll(-1)
 			case "Page_Down":
 				c.scroll(max(1, c.height/2))
 			case "Page_Up":
 				c.scroll(-max(1, c.height/2))
+				if c.top == 0 {
+					a.olderMessages = c.NextBefore != ""
+				}
 			case "G", "End":
 				c.bottom()
-			case "o":
-				a.olderMessages = c.NextBefore != ""
-				if !a.olderMessages {
-					a.status = "All available history is loaded."
-				}
 			}
 		}
 	}
@@ -246,7 +239,7 @@ func (a *app) navigation(k vaxis.Key) bool {
 	if a.mode == insert || k.EventType == vaxis.EventPaste || k.EventType == vaxis.EventRelease {
 		return false
 	}
-	if k.Matches('J') || k.Matches('K') || k.Matches('d', vaxis.ModCtrl) || k.Matches('u', vaxis.ModCtrl) {
+	if k.Matches('d', vaxis.ModCtrl) || k.Matches('u', vaxis.ModCtrl) {
 		return true
 	}
 	switch k.String() {

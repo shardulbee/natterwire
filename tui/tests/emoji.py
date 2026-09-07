@@ -38,7 +38,7 @@ if __name__ == '__main__':
     terminal = Terminal(args.binary, ['--url', f'http://127.0.0.1:{server.server_port}'], width_mode=args.width)
     try:
         terminal.expect('Message 080')
-        for key in 'k' * 30 + 'j' * 10:
+        for key in '\x15' * 3 + '\x04':
             terminal.send(key)
         terminal.capture(args.captures, 'incremental')
         terminal.resize(110, 32)

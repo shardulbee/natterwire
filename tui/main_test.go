@@ -46,6 +46,10 @@ func TestHTTPAndControls(t *testing.T) {
 	if !validBase("https://example.test:8741/prefix") {
 		t.Fatal("rejected valid base")
 	}
+	chatsURL, _ := url.Parse((request{before: "cursor"}).url("https://example.test"))
+	if chatsURL.Query().Get("sort") != "latest" {
+		t.Fatal("chat pages must request latest-message order")
+	}
 	u, _ := url.Parse((request{chat: "a/b", before: "a+=?"}).url("https://example.test/"))
 	if u.EscapedPath() != "/chats/a%2Fb/messages" || u.Query().Get("before") != "a+=?" {
 		t.Fatal("opaque ID or cursor was not escaped", u)
@@ -119,7 +123,7 @@ func TestModesCacheAndStaleResponses(t *testing.T) {
 	if c.dirty {
 		t.Fatal("unchanged poll dirtied layout")
 	}
-	a.key(vaxis.Key{Keycode: 'j', ShiftedCode: 'J', Modifiers: vaxis.ModShift})
+	a.key(vaxis.Key{Keycode: 'j'})
 	if a.opened != "weekend" || a.mode != sidebar || !a.pendingMessages {
 		t.Fatal("sidebar did not activate chat")
 	}
@@ -136,7 +140,7 @@ func TestModesCacheAndStaleResponses(t *testing.T) {
 	if a.mode != sidebar {
 		t.Fatal("escape did not exit insert")
 	}
-	a.key(vaxis.Key{Keycode: 'k', ShiftedCode: 'K', Modifiers: vaxis.ModShift})
+	a.key(vaxis.Key{Keycode: 'k'})
 	c.prepare(c.Items, 40, 5, unicodeWidth, image.Point{})
 	if a.current() != c || &c.rows[0] != rows || !c.following {
 		t.Fatal("warm switch lost cache or bottom position")
@@ -171,8 +175,6 @@ func TestSidebarScrollKeys(t *testing.T) {
 		key   vaxis.Key
 		delta int
 	}{
-		{vaxis.Key{Keycode: 'j'}, 1},
-		{vaxis.Key{Keycode: 'k'}, -1},
 		{vaxis.Key{Keycode: 'd', Modifiers: vaxis.ModCtrl}, 5},
 		{vaxis.Key{Keycode: 'u', Modifiers: vaxis.ModCtrl}, -5},
 		{vaxis.Key{Keycode: vaxis.KeyPgDown}, 5},
@@ -184,22 +186,24 @@ func TestSidebarScrollKeys(t *testing.T) {
 			t.Fatalf("%s did not scroll while retaining sidebar focus: top=%d", tc.key, c.top)
 		}
 	}
-	for _, key := range "du" {
+	for _, key := range "dunoJK" {
 		c.top = 40
 		k := vaxis.Key{Keycode: key}
 		a.key(k)
-		if c.top != 40 || a.navigation(k) {
+		if c.top != 40 || a.navigation(k) || a.selected != 0 || a.moreChats || a.olderMessages {
 			t.Fatalf("plain %c must not scroll", key)
 		}
 	}
 	a.chats.NextBefore, c.NextBefore = "chats-cursor", "messages-cursor"
-	a.key(vaxis.Key{Keycode: 'n'})
-	if !a.moreChats || a.olderMessages {
-		t.Fatal("n must request chats, not messages")
-	}
-	a.key(vaxis.Key{Keycode: 'o'})
+	c.top = 1
+	a.key(vaxis.Key{Keycode: 'u', Modifiers: vaxis.ModCtrl})
 	if !a.olderMessages {
-		t.Fatal("o must request older messages from sidebar")
+		t.Fatal("scrolling to the top must request older messages")
+	}
+	a.key(vaxis.Key{Keycode: 'j'})
+	a.key(vaxis.Key{Keycode: 'j'})
+	if !a.moreChats || a.opened != "sam" {
+		t.Fatal("reaching the last chat must request more chats")
 	}
 }
 

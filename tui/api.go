@@ -92,6 +92,8 @@ func (r request) url(base string) string {
 	q := url.Values{"limit": {"50"}}
 	if r.chat != "" {
 		q.Set("media", "metadata")
+	} else {
+		q.Set("sort", "latest")
 	}
 	if r.before != "" {
 		q.Set("before", r.before)

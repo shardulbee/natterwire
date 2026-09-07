@@ -32,7 +32,7 @@ try:
     for i in range(60):
         frames.clear()
         started = time.perf_counter()
-        os.write(terminal.fd, b'J' if i % 2 == 0 else b'K')
+        os.write(terminal.fd, b'j' if i % 2 == 0 else b'k')
         while not frames and time.perf_counter() - started < 1:
             terminal.read(0.001)
         assert frames, 'No selection frame within one second'

@@ -86,7 +86,7 @@ func (d *database) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch {
 	case len(parts) == 1 && parts[0] == "chats":
-		result, err = d.chats(r.Context(), limit, before)
+		result, err = d.chats(r.Context(), limit, before, q.Get("sort") == "latest")
 	case len(parts) == 3 && parts[0] == "chats" && parts[2] == "messages":
 		result, err = d.messages(r.Context(), parts[1], limit, before, metadataOnly)
 	case len(parts) == 2 && parts[0] == "messages":

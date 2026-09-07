@@ -26,8 +26,8 @@ Use `GOARCH=arm64` and a different output directory for ARM Linux.
 
 | Focus | Keys |
 | --- | --- |
-| Sidebar | `j/k` scroll transcript lines, `J/K` switch chats, Ctrl+D/Ctrl+U scroll half-pages, `G` jumps to latest |
-| Sidebar | `i` opens the draft, `n` loads more chats into the sidebar, `o` loads older messages in the current chat |
+| Sidebar | `j/k` switch chats, Ctrl+U/Ctrl+D scroll up/down half-pages, `G` jumps to latest |
+| Sidebar | `i` opens the draft |
 | Insert | Type normally, Esc returns to sidebar; Enter sends text |
 | Outside insert | `r` refreshes chats and open transcript, `q` quits |
 | Anywhere | Ctrl+L repaints, Ctrl+C quits |
@@ -41,6 +41,8 @@ Images display through Kitty graphics, fitted to the chat area without fixed thu
 Decoded sources have a 128 MiB cache budget; fitted pixels plus terminal copies have a 64 MiB budget. Scrolling changes placements, not uploaded pixels. The small local Vaxis crop patch is documented in [third_party/VAXIS.md](third_party/VAXIS.md).
 
 ## Refresh behavior
+
+Chats are ordered by latest message, ignoring pins. Reaching the last chat loads more chats; scrolling to the top of the transcript loads older messages.
 
 Background requests refresh every 30 seconds and when opening a chat. Messages and wrapped rows stay cached per conversation for immediate reopening; unchanged polls do not rewrap. Network requests never block input. Failed requests keep cached content. While reading earlier messages, refresh preserves the visible message and shows a new-message count. No streaming or notifications.
 

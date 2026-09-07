@@ -88,6 +88,26 @@ func TestChatOrderingAndNames(t *testing.T) {
 		t.Fatalf("%+v", p)
 	}
 }
+func TestLatestChatOrdering(t *testing.T) {
+	d := fixture(t, nil)
+	var ids []string
+	target := "/chats?sort=latest&limit=1"
+	for len(ids) < 5 {
+		p := get[Chat](t, d, target)
+		for _, chat := range p.Items {
+			ids = append(ids, chat.ID)
+		}
+		if p.NextBefore == nil {
+			break
+		}
+		target = "/chats?sort=latest&limit=1&before=" + *p.NextBefore
+	}
+	want := []string{opaque("iMessage;-;alex@example.invalid"), opaque("iMessage;+;weekend"), opaque("any;-;+1 (415) 555-0100"), opaque("iMessage;+;empty-group")}
+	if !reflect.DeepEqual(ids, want) {
+		t.Fatalf("latest ordering with pins: got %v, want %v", ids, want)
+	}
+}
+
 func TestMessagePaginationAndBodies(t *testing.T) {
 	d := fixture(t, nil)
 	target := "/chats/" + opaque("iMessage;-;alex@example.invalid") + "/messages?limit=2"
@@ -315,7 +335,7 @@ func TestConcurrentHTTP(t *testing.T) {
 	wg.Wait()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := d.chats(ctx, 50, nil); err == nil {
+	if _, err := d.chats(ctx, 50, nil, false); err == nil {
 		t.Fatal("ignored cancellation")
 	}
 }
@@ -329,7 +349,7 @@ func TestChatTies(t *testing.T) {
 	var ids []string
 	var before *string
 	for {
-		p, err := d.chats(context.Background(), 1, before)
+		p, err := d.chats(context.Background(), 1, before, false)
 		if err != nil {
 			t.Fatal(err)
 		}

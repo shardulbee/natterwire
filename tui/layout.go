@@ -290,7 +290,7 @@ func (a *app) draw(vx *vaxis.Vaxis, measure func(string) int) {
 		line(content, 0, "Natterwire", accent, measure)
 	}
 	help := []string{
-		" j/k scroll  J/K chats  ^D/^U half-page  G latest  i draft  n more chats  o older  r refresh  q quit",
+		" j/k chats  ^U/^D half-page  G latest  i draft  r refresh  q quit",
 		" INSERT  Esc sidebar  Ctrl+C quit",
 	}[a.mode]
 	if a.failure != "" {
