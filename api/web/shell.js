@@ -25,10 +25,14 @@ function messageTuple(message, chat) {
   const text = (message.text || '').replaceAll('\ufffc', '').trim();
   return [message.isFromMe ? 'You' : message.sender || chat.name, formatTime(message.sentAt), text, message];
 }
+function visibleAttachments(message) {
+  return (message.attachments || []).filter(item => !item.filename?.endsWith('.pluginPayloadAttachment'));
+}
 function previewText(message, chat) {
   const [, , text, raw] = messageTuple(message, chat);
   const sender = raw.isFromMe ? 'You: ' : raw.sender && raw.sender !== chat.name ? `${raw.sender}: ` : '';
-  const attachment = raw.attachments?.length ? raw.attachments.some(item => item.mimeType?.startsWith('image/')) ? '[Image]' : '[Attachment]' : '';
+  const attachments = visibleAttachments(raw);
+  const attachment = attachments.length ? attachments.some(item => item.mimeType?.startsWith('image/')) ? '[Image]' : '[Attachment]' : '';
   return sender + (text || attachment);
 }
 async function request(path, options) {
@@ -91,14 +95,34 @@ async function loadChats() {
     $('count').textContent = error.message;
   }
 }
-async function loadMessages(chat) {
-  if (chat.messages) return;
+async function loadMessages(chat, refresh = false) {
+  if (chat.messages && !refresh) return;
+  const transcript = $('transcript');
+  const preserveScroll = refresh && conversations[selected] === chat && transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight > 2;
+  const bottomOffset = transcript.scrollHeight - transcript.scrollTop;
   chat.previewLoaded = true;
   const page = await request(`chats/${encodeURIComponent(chat.id)}/messages?limit=100&media=metadata`);
-  chat.messages = page.items.slice().reverse().map(message => messageTuple(message, chat));
+  const accepted = chat.messages?.filter(message => message[3]?.localAccepted) || [];
+  const messages = page.items.slice().reverse().map(message => messageTuple(message, chat));
+  const matched = new Set();
+  let confirmed = false;
+  for (const local of accepted) {
+    const sentAt = new Date(local[3].sentAt).getTime();
+    const match = messages.find(message => !matched.has(message[3].id) && message[3].isFromMe && message[2] === local[2].trim() && Math.abs(new Date(message[3].sentAt).getTime() - sentAt) < 120000);
+    if (match) {
+      matched.add(match[3].id);
+      confirmed = true;
+    }
+    else messages.push(local);
+  }
+  chat.messages = messages.sort((a, b) => new Date(a[3]?.sentAt) - new Date(b[3]?.sentAt));
   if (page.items[0]) chat.preview = previewText(page.items[0], chat);
   updateChat(conversations.indexOf(chat));
-  if (conversations[selected] === chat) renderMessages(chat);
+  if (conversations[selected] === chat) {
+    renderMessages(chat);
+    if (preserveScroll) transcript.scrollTop = transcript.scrollHeight - bottomOffset;
+    if (confirmed) $('status').textContent = chat.messages.some(message => message[3]?.localAccepted) ? 'Accepted by Messages · delivery unconfirmed' : 'Confirmed in Messages';
+  }
 }
 function appendMessage(fragment, chat, message, extraClass = '') {
   const [sender, time, text] = message;
@@ -109,7 +133,7 @@ function appendMessage(fragment, chat, message, extraClass = '') {
     body.textContent = text;
     article.append(body);
   }
-  const attachments = message[3]?.attachments || [];
+  const attachments = visibleAttachments(message[3] || {});
   if (attachments.length) {
     const media = document.createElement('div');
     media.className = 'attachments';
@@ -121,6 +145,9 @@ function appendMessage(fragment, chat, message, extraClass = '') {
         return unavailable;
       };
       if (attachment.mediaID && attachment.version && attachment.version !== 'missing' && (attachment.mimeType?.startsWith('image/') || attachment.width && attachment.height)) {
+        const frame = document.createElement('div');
+        frame.className = 'attachment-frame';
+        if (attachment.width && attachment.height) frame.style.aspectRatio = `${attachment.width} / ${attachment.height}`;
         const image = document.createElement('img');
         image.className = 'attachment-image';
         image.alt = attachment.filename ? `Image: ${attachment.filename}` : 'Image attachment';
@@ -131,8 +158,9 @@ function appendMessage(fragment, chat, message, extraClass = '') {
           image.height = attachment.height;
         }
         image.src = `attachments/${encodeURIComponent(attachment.mediaID)}?version=${encodeURIComponent(attachment.version)}`;
-        image.onerror = () => image.replaceWith(fallback());
-        media.append(image);
+        image.onerror = () => frame.replaceChildren(fallback());
+        frame.append(image);
+        media.append(frame);
       } else media.append(fallback());
     }
     article.append(media);
@@ -162,7 +190,7 @@ function renderMessages(chat, query = $('search').value.trim().toLowerCase()) {
   const fragment = document.createDocumentFragment();
   let day = '', match, displayed = 0;
   for (const message of chat.messages) {
-    if (!message[2] && !message[3]?.attachments?.length) continue;
+    if (!message[2] && !visibleAttachments(message[3] || {}).length) continue;
     displayed++;
     const nextDay = dayLabel(message[3]?.sentAt);
     if (nextDay !== day) {
@@ -242,6 +270,7 @@ async function sendDraft() {
     updateChat(conversations.indexOf(chat));
     attempts.delete(chat.id);
     renderMessages(chat);
+    setTimeout(() => loadMessages(chat, true).catch(() => {}), 750);
   } catch (error) {
     attempt.state = 'failed';
     if (!drafts.get(chat.id)) drafts.set(chat.id, attempt.text);
@@ -368,6 +397,15 @@ document.addEventListener('keydown', event => {
       buttons[selected].scrollIntoView({ block: 'nearest' });
     }
   } else if (event.key === 'G') $('transcript').scrollTop = $('transcript').scrollHeight;
+  else if (event.key === 'r') {
+    const chat = conversations[selected];
+    if (chat) {
+      $('status').textContent = 'Refreshing…';
+      loadMessages(chat, true).then(() => {
+        if (conversations[selected] === chat && !$('status').textContent.startsWith('Confirmed')) $('status').textContent = '';
+      }).catch(error => { if (conversations[selected] === chat) $('status').textContent = error.message; });
+    }
+  }
   else if (event.key === 'i') compose();
   else if (event.key === '/') openSearch();
   else if (event.key === '?') $('shortcuts').showModal();
