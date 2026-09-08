@@ -102,7 +102,8 @@ jobs:
           fi
           mv "$app" "$backup"
           mv "$incoming" "$app"
-          /usr/bin/open "$app"
+          # The installed app must survive Actions' orphan-process cleanup.
+          RUNNER_TRACKING_ID='' /usr/bin/open "$app"
           curl --fail --silent --show-error --retry 15 --retry-connrefused --retry-delay 2 \
             --max-time 5 --output /dev/null http://127.0.0.1:8741/send-session
           # Retain the old bundle on failure until the replacement is healthy.
