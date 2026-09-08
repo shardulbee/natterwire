@@ -487,7 +487,7 @@ document.addEventListener('keydown', event => {
   else if (event.key === 'j' || event.key === 'k') {
     if (visible.length) {
       const position = visible.indexOf(selected);
-      openChat(visible[(position + (event.key === 'j' ? 1 : -1) + visible.length) % visible.length]);
+      if (event.key === 'j' || position > 0) openChat(visible[(position + (event.key === 'j' ? 1 : -1) + visible.length) % visible.length]);
       buttons[selected].scrollIntoView({ block: 'nearest' });
     }
   } else if (event.key === 'G') $('transcript').scrollTop = $('transcript').scrollHeight;
