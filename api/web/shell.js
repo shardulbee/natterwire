@@ -115,10 +115,10 @@ async function loadPreview(index) {
   try {
     const page = await request(`chats/${encodeURIComponent(chat.id)}/messages?limit=1&media=metadata`);
     if (page.items[0]) chat.preview = previewText(page.items[0], chat);
-    updateChat(index);
+    updateChat(conversations.indexOf(chat));
   } catch {
     chat.preview = 'Preview unavailable';
-    updateChat(index);
+    updateChat(conversations.indexOf(chat));
   }
 }
 function buildChats() {
@@ -130,7 +130,7 @@ function buildChats() {
     button.title = chat.name;
     button.innerHTML = '<span class="chat-summary"><span class="chat-top"><span class="chat-name"></span><time></time></span><span class="preview"></span></span>';
     button.querySelector('.chat-name').textContent = chat.name;
-    button.onclick = () => openChat(index);
+    button.onclick = () => openChat(conversations.indexOf(chat));
     $('chats').append(button);
     updateChat(index);
     return button;
@@ -271,7 +271,7 @@ function renderMessages(chat, query = $('search').value.trim().toLowerCase()) {
     return;
   }
   const fragment = document.createDocumentFragment();
-  let day = '', match, displayed = 0;
+  let day = '', match, displayed = 0, previous, previousArticle;
   for (const message of chat.messages) {
     if (!message[2] && !visibleAttachments(message[3] || {}).length) continue;
     displayed++;
@@ -284,6 +284,13 @@ function renderMessages(chat, query = $('search').value.trim().toLowerCase()) {
       day = nextDay;
     }
     const article = appendMessage(fragment, chat, message, message[3]?.localAccepted ? ' accepted' : '');
+    article.classList.remove('grouped');
+    if (previous && previous[0] === message[0] &&
+        Math.floor(Date.parse(previous[3]?.sentAt) / 60000) === Math.floor(Date.parse(message[3]?.sentAt) / 60000)) {
+      previousArticle.classList.add('grouped');
+    }
+    previous = message;
+    previousArticle = article;
     if (query && !match && message[2].toLowerCase().includes(query)) match = article;
   }
   const attempt = attempts.get(chat.id);
@@ -335,6 +342,7 @@ async function sendDraft() {
   } else attempt.state = 'sending';
   drafts.set(chat.id, '');
   $('draft').value = '';
+  $('transcript').focus({ preventScroll: true });
   updateComposer();
   renderMessages(chat);
   $('status').textContent = '';
@@ -351,10 +359,16 @@ async function sendDraft() {
     });
     if (!receipt.accepted) throw new Error('Missing acceptance receipt');
     $('status').textContent = '';
-    chat.messages.push(['You', '', attempt.text, { isFromMe: true, sentAt: attempt.sentAt, localAccepted: true }]);
+    chat.messages.push(['You', formatTime(attempt.sentAt), attempt.text, { isFromMe: true, sentAt: attempt.sentAt, localAccepted: true }]);
     chat.preview = `You: ${attempt.text}`;
     chat.time = formatTime(attempt.sentAt);
-    updateChat(conversations.indexOf(chat));
+    const active = conversations[selected], index = conversations.indexOf(chat);
+    conversations.unshift(...conversations.splice(index, 1));
+    buttons.unshift(...buttons.splice(index, 1));
+    $('chats').prepend(buttons[0]);
+    selected = conversations.indexOf(active);
+    updateChat(0);
+    filterChats();
     attempts.delete(chat.id);
     renderMessages(chat);
     setTimeout(() => loadMessages(chat, true).catch(() => {}), 750);

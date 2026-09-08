@@ -51,6 +51,8 @@ h1 { min-width:0; flex:1; margin:0; font-size:14px; font-weight:600; letter-spac
 .date { margin:0 0 14px; text-align:center; color:var(--muted); font-size:11px; }
 .message { max-width:min(80%,560px); margin-bottom:6px; align-self:flex-start; }
 .message.me { align-self:flex-end; }
+.message.grouped { margin-bottom:3px; }
+.message.grouped .message-head { display:none; }
 .message p { margin:0; padding:7px 10px; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.45; background:var(--well); border-radius:9px 9px 9px 3px; }
 .message.me p { color:var(--bubble-fg); background:var(--bubble); border-radius:9px 9px 3px 9px; }
 .message-head { display:flex; align-items:baseline; gap:8px; padding:2px 3px 0; color:var(--muted); }

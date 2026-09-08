@@ -1,5 +1,5 @@
 // Run in a fixture browser page with: agent-browser eval "$(cat api/tests/frontend.js)"
-// Replaces in-memory conversations only. Does not send messages. Reload afterward.
+// Replaces in-memory conversations and mocks sends. Does not send real messages. Reload afterward.
 (async () => {
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
   const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
@@ -121,6 +121,58 @@
     assert(!chat.loading, 'Failure must release the in-flight request');
     fail = false;
     await loadMessages(chat, true);
+  } finally { request = originalRequest; }
+
+  // Same sender and calendar minute, never merely less than 60 seconds apart.
+  const groupedChat = conversations[3];
+  groupedChat.messages = [
+    ['Alex', '12:30', 'First', { sentAt: '2026-09-08T12:30:00Z' }],
+    ['Alex', '12:30', 'Second', { sentAt: '2026-09-08T12:30:59Z' }],
+    ['Alex', '12:31', 'Next minute', { sentAt: '2026-09-08T12:31:00Z' }],
+    ['Sam', '12:31', 'Different sender', { sentAt: '2026-09-08T12:31:01Z' }],
+    ['You', '12:31', 'Outgoing one', { sentAt: '2026-09-08T12:31:02Z' }],
+    ['You', '12:31', 'Outgoing two', { sentAt: '2026-09-08T12:31:59Z' }],
+    ['You', '12:31', 'Next day', { sentAt: '2026-09-09T12:31:00Z' }],
+  ];
+  select(3);
+  assert([...$('messages').querySelectorAll('.message')].map(node => node.classList.contains('grouped')).join() === 'true,false,false,false,true,false,false', 'Grouping must respect sender, minute and date');
+  assert(getComputedStyle($('messages').querySelector('.message-head')).display === 'none', 'Grouped metadata must be hidden');
+  groupedChat.messages.splice(1, 1);
+  renderMessages(groupedChat);
+  assert(!$('messages').querySelector('.message').classList.contains('grouped'), 'Cached group end must reset after removal');
+
+  // No real send requests; keep the mock until the delayed metadata refresh finishes.
+  let accept;
+  request = async (path, options) => options?.method === 'POST'
+    ? new Promise(resolve => { accept = resolve; })
+    : path === 'send-session' ? { session: 'fixture-session' } : { items: [] };
+  try {
+    $('draft').value = 'New message';
+    $('draft').dispatchEvent(new Event('input'));
+    compose();
+    const sending = sendDraft();
+    assert(document.activeElement === $('transcript'), 'Submit must return focus to transcript');
+    document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true }));
+    const active = conversations[selected];
+    assert(active !== groupedChat, 'j must switch chats while sending');
+    await Promise.resolve();
+    accept({ accepted: true });
+    await sending;
+    assert(conversations[0] === groupedChat && $('chats').firstElementChild === buttons[0], 'Accepted send must move chat to top');
+    assert(conversations[selected] === active && buttons[selected].getAttribute('aria-current') === 'true', 'Reordering must preserve active chat');
+    buttons[0].click();
+    assert(conversations[selected] === groupedChat, 'Reordered row must open correct chat');
+    document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true }));
+    document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', bubbles: true }));
+    assert(conversations[selected] === groupedChat, 'j/k must follow reordered sidebar');
+    await new Promise(resolve => setTimeout(resolve, 850));
+    request = async () => { throw new Error('Fixture rejection'); };
+    select(1);
+    const failedChat = conversations[selected];
+    $('draft').value = 'Retain failed draft';
+    $('draft').dispatchEvent(new Event('input'));
+    await sendDraft();
+    assert(conversations[1] === failedChat && $('draft').value === 'Retain failed draft', 'Failed send must retain draft without reordering');
   } finally { request = originalRequest; }
 
   $('draft').value = 'Multiple lines\n'.repeat(12);
