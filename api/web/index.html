@@ -11,6 +11,7 @@
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="stylesheet" href="shell.css">
   <script src="shell.js" defer></script>
+  <script src="push.js" defer></script>
 </head>
 <body>
   <div id="app">
@@ -25,6 +26,11 @@
     </header>
     <div id="count" role="status" hidden></div>
     <nav id="chats" aria-label="Choose a conversation"></nav>
+    <div id="notification-prompt" hidden>
+      <button id="notifications" type="button">Enable notifications</button>
+      <button id="dismiss-notifications" type="button" aria-label="Dismiss notification prompt">×</button>
+      <p id="notification-status" role="status" hidden></p>
+    </div>
   </aside>
   <main>
     <header class="conversation-header"><button id="back" aria-label="Back to conversations"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg></button><h1 id="name" tabindex="-1"></h1></header>

@@ -24,6 +24,7 @@ type Chat struct {
 	Service       *string `json:"service,omitempty"`
 	LastMessageAt *string `json:"lastMessageAt,omitempty"`
 	MessageCount  int64   `json:"messageCount"`
+	UnreadCount   *int64  `json:"unreadCount"` // nil when this Messages schema lacks is_read
 }
 type Message struct {
 	ID          string       `json:"id"`
@@ -269,9 +270,14 @@ func (d *database) chats(ctx context.Context, limit int, before *string, latest 
 		}
 		args = append(args, c.date, c.date, c.row)
 	}
-	query := fmt.Sprintf(`SELECT c.guid, %s, %s, MAX(m.date), COUNT(m.ROWID), c.ROWID, %s, %s, %s AS pin_order
+	unread := "NULL"
+	if d.message["is_read"] {
+		// Outgoing is_read values are recipient receipts, not local unread state.
+		unread = "SUM(CASE WHEN m.is_from_me=0 AND m.is_read=0 THEN 1 ELSE 0 END)"
+	}
+	query := fmt.Sprintf(`SELECT c.guid, %s, %s, MAX(m.date), COUNT(m.ROWID), c.ROWID, %s, %s, %s AS pin_order, %s
 	 FROM chat c JOIN chat_message_join cmj ON cmj.chat_id=c.ROWID JOIN message m ON m.ROWID=cmj.message_id
-	 WHERE c.guid IS NOT NULL AND %s GROUP BY c.ROWID %s ORDER BY %s LIMIT ?`, column(d.chat, "c", "display_name"), column(d.chat, "c", "service_name"), column(d.chat, "c", "chat_identifier"), count, pinExpr, filters, having, order)
+	 WHERE c.guid IS NOT NULL AND %s GROUP BY c.ROWID %s ORDER BY %s LIMIT ?`, column(d.chat, "c", "display_name"), column(d.chat, "c", "service_name"), column(d.chat, "c", "chat_identifier"), count, pinExpr, unread, filters, having, order)
 	args = append(args, limit+1)
 	rows, err := d.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -286,7 +292,7 @@ func (d *database) chats(ctx context.Context, limit int, before *string, latest 
 	values := []chatRow{}
 	for rows.Next() {
 		var v chatRow
-		err = rows.Scan(&v.guid, &v.explicit, &v.chat.Service, &v.date, &v.chat.MessageCount, &v.row, &v.identifier, &v.participants, &v.pin)
+		err = rows.Scan(&v.guid, &v.explicit, &v.chat.Service, &v.date, &v.chat.MessageCount, &v.row, &v.identifier, &v.participants, &v.pin, &v.chat.UnreadCount)
 		if err != nil {
 			break
 		}

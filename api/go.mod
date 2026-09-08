@@ -3,8 +3,10 @@ module github.com/shardulbee/natterwire/api
 go 1.25.0
 
 require (
+	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/gen2brain/heic v0.7.1
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
+	golang.org/x/crypto v0.55.0
 	golang.org/x/image v0.45.0
 	golang.org/x/net v0.58.0
 	howett.net/plist v1.0.1
@@ -14,6 +16,7 @@ require (
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.10.1 // indirect
+	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect

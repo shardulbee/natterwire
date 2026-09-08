@@ -35,3 +35,5 @@ INSERT INTO message VALUES
 INSERT INTO chat_message_join VALUES (1,1),(1,2),(1,3),(1,4),(1,5),(1,6),(1,7),(1,8),(1,9),(2,10),(3,11),(4,12),(5,13),(6,13),(1,14),(1,15),(1,16);
 INSERT INTO attachment VALUES (1, 'photo', NULL, 'fixture.png', 'image/png');
 INSERT INTO message_attachment_join VALUES (14,1);
+ALTER TABLE message ADD COLUMN is_read INTEGER DEFAULT 1;
+UPDATE message SET is_read=0 WHERE ROWID IN (2,3,4,5,6,7,10,14);

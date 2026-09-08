@@ -279,7 +279,7 @@ func TestReadOnlyAndMinimalSchema(t *testing.T) {
 	}
 	defer minimal.db.Close()
 	p := get[Chat](t, minimal, "/chats")
-	if p.Items[0].DisplayName != "minimal" || p.Items[0].Service != nil {
+	if p.Items[0].DisplayName != "minimal" || p.Items[0].Service != nil || p.Items[0].UnreadCount != nil {
 		t.Fatal(p)
 	}
 	m := get[Message](t, minimal, "/messages/"+p.Items[0].ID)

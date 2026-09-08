@@ -13,7 +13,7 @@ api/bin/natterwire-api --help
 api/bin/natterwire-api
 ```
 
-The service embeds the browser client at `/` and binds only to `127.0.0.1`, port 8741 by default. `--port` selects another port, not another interface. `--db` overrides `NATTERWIRE_DB_PATH`, then `MESSAGES_DB_PATH`, then `~/Library/Messages/chat.db`. It opens SQLite with `mode=ro` and `query_only`, not `immutable`, so live WAL updates remain visible. Missing databases are not created. Copies of live databases must include a consistent WAL snapshot; use SQLite's backup facility rather than copying only `chat.db` while Messages is running.
+The service embeds the [browser client](web/README.md) at `/` and binds only to `127.0.0.1`, port 8741 by default. `--port` selects another port, not another interface. `--db` overrides `NATTERWIRE_DB_PATH`, then `MESSAGES_DB_PATH`, then `~/Library/Messages/chat.db`. It opens SQLite with `mode=ro` and `query_only`, not `immutable`, so live WAL updates remain visible. Missing databases are not created. Copies of live databases must include a consistent WAL snapshot; use SQLite's backup facility rather than copying only `chat.db` while Messages is running.
 
 ## Linux fixture workflow
 
@@ -22,7 +22,7 @@ Python 3 is needed only to create the fixture. Use the real API, not TUI demo mo
 ```sh
 python3 scripts/create-fixture.py /tmp/natterwire-fixture.db
 api/bin/natterwire-api --db /tmp/natterwire-fixture.db \
-  --contacts api/testdata/contacts.json --pins ''
+  --contacts api/testdata/contacts.json --pins '' --push-state ''
 # In another terminal:
 tui/bin/natterwire-tui
 ```

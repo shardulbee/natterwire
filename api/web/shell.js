@@ -107,10 +107,13 @@ function updateChat(index) {
   if (!button) return;
   button.querySelector('.preview').textContent = chat.preview || 'No message preview';
   button.querySelector('time').textContent = chat.time;
+  const unread = button.querySelector('.unread');
+  unread.hidden = !(chat.unreadCount > 0);
+  button.setAttribute('aria-label', chat.name + (chat.unreadCount > 0 ? ', unread in Mac Messages' : ''));
 }
 async function loadPreview(index) {
   const chat = conversations[index];
-  if (chat.previewLoaded || chat.messages) return;
+  if (chat.previewLoaded || chat.messages && !chat.stale) return;
   chat.previewLoaded = true;
   try {
     const page = await request(`chats/${encodeURIComponent(chat.id)}/messages?limit=1&media=metadata`);
@@ -122,31 +125,38 @@ async function loadPreview(index) {
   }
 }
 function buildChats() {
+  previewObserver.disconnect();
   $('chats').replaceChildren();
-  buttons = conversations.map((chat, index) => {
+  buttons = conversations.map(chat => {
     const button = document.createElement('button');
     button.className = 'chat';
     button.setAttribute('aria-label', chat.name);
     button.title = chat.name;
-    button.innerHTML = '<span class="chat-summary"><span class="chat-top"><span class="chat-name"></span><time></time></span><span class="preview"></span></span>';
+    button.innerHTML = '<span class="unread" title="Unread in Mac Messages" aria-hidden="true" hidden></span><span class="chat-summary"><span class="chat-top"><span class="chat-name"></span><time></time></span><span class="preview"></span></span>';
     button.querySelector('.chat-name').textContent = chat.name;
     button.onclick = () => openChat(conversations.indexOf(chat));
     $('chats').append(button);
-    updateChat(index);
     return button;
   });
   visible = conversations.map((_, index) => index);
-  const previewObserver = new IntersectionObserver(entries => {
-    for (const entry of entries) if (entry.isIntersecting) loadPreview(buttons.indexOf(entry.target));
-  });
-  for (const button of buttons) previewObserver.observe(button);
+  for (const [index, button] of buttons.entries()) {
+    updateChat(index);
+    previewObserver.observe(button);
+  }
 }
+const previewObserver = new IntersectionObserver(entries => {
+  for (const entry of entries) if (entry.isIntersecting) {
+    previewObserver.unobserve(entry.target);
+    const index = buttons.indexOf(entry.target);
+    if (index >= 0) loadPreview(index);
+  }
+});
 async function loadChats() {
   $('count').hidden = false;
   $('count').textContent = 'Loading conversations…';
   try {
     const page = await request('chats?limit=100&sort=latest');
-    conversations = page.items.map(chat => ({ id: chat.id, name: chat.displayName, preview: '', time: formatTime(chat.lastMessageAt), messages: null }));
+    conversations = page.items.map(chat => ({ id: chat.id, name: chat.displayName, unreadCount: chat.unreadCount, preview: '', time: formatTime(chat.lastMessageAt), lastMessageAt: chat.lastMessageAt, messages: null }));
     buildChats();
     $('count').hidden = conversations.length > 0;
     $('count').textContent = conversations.length ? '' : 'No conversations';
@@ -154,6 +164,53 @@ async function loadChats() {
   } catch (error) {
     $('count').textContent = error.message;
   }
+}
+let refreshing = false;
+async function refreshApp() {
+  if (document.hidden || refreshing) return;
+  refreshing = true;
+  try {
+    const page = await request('chats?limit=100&sort=latest');
+    const active = conversations[selected];
+    const cached = new Map(conversations.map(chat => [chat.id, chat]));
+    const next = page.items.map(item => {
+      const chat = cached.get(item.id) || { id: item.id, preview: '', messages: null };
+      if (chat.lastMessageAt !== item.lastMessageAt) {
+        chat.previewLoaded = false;
+        // Inactive transcripts refresh when opened; previews need only the newest message.
+        chat.stale = true;
+      }
+      Object.assign(chat, { name: item.displayName, unreadCount: item.unreadCount, time: formatTime(item.lastMessageAt), lastMessageAt: item.lastMessageAt });
+      return chat;
+    });
+    // Keep open conversations and pending sends even outside the newest 100.
+    for (const chat of conversations) {
+      if ((chat === active || attempts.has(chat.id)) && !next.includes(chat)) next.push(chat);
+    }
+    const rebuild = next.length !== conversations.length || next.some((chat, i) => chat !== conversations[i] || buttons[i]?.title !== chat.name);
+    conversations = next;
+    selected = active ? conversations.indexOf(active) : -1;
+    if (rebuild) {
+      const focusedChat = buttons.indexOf(document.activeElement);
+      const focusedID = focusedChat >= 0 ? [...cached.values()][focusedChat]?.id : null;
+      const scrollTop = $('chats').scrollTop;
+      buildChats();
+      $('chats').scrollTop = scrollTop;
+      if (focusedID) buttons[conversations.findIndex(chat => chat.id === focusedID)]?.focus({ preventScroll: true });
+    }
+    conversations.forEach((chat, index) => {
+      updateChat(index);
+      if (!chat.previewLoaded && chat !== active) previewObserver.observe(buttons[index]);
+    });
+    filterChats();
+    if (active) {
+      $('name').textContent = active.name;
+      if (!mobile.matches || document.body.classList.contains('chat-open')) buttons[selected].setAttribute('aria-current', 'true');
+      await loadMessages(active, true);
+    } else if (conversations.length) select(0, false);
+  } catch {
+    // Keep cached content and drafts on transient failures; retry on the next tick.
+  } finally { refreshing = false; }
 }
 function loadMessages(chat, refresh = false) {
   if (chat.loading) return chat.loading;
@@ -184,6 +241,7 @@ async function fetchMessages(chat, refresh) {
   messages.sort((a, b) => new Date(a[3]?.sentAt) - new Date(b[3]?.sentAt));
   const changed = messages.length !== chat.messages?.length || messages.some((message, index) => message !== chat.messages[index]);
   chat.messages = messages;
+  chat.stale = false;
   if (page.items[0]) chat.preview = previewText(page.items[0], chat);
   updateChat(conversations.indexOf(chat));
   if (conversations[selected] === chat && changed) {
@@ -489,7 +547,7 @@ function select(index, open = true) {
   browse();
   renderMessages(chat, query);
   $('status').textContent = '';
-  if (!chat.messages) loadMessages(chat).catch(error => { if (conversations[selected] === chat) $('status').textContent = error.message; });
+  if (!chat.messages || chat.stale) loadMessages(chat, true).catch(error => { if (conversations[selected] === chat) $('status').textContent = error.message; });
   if (open && mobile.matches) $('name').focus({ preventScroll: true });
 }
 function openChat(index) {
@@ -657,4 +715,37 @@ document.addEventListener('keydown', event => {
   event.preventDefault();
 });
 
-loadChats();
+const chatsReady = loadChats().then(() => {
+  // Hidden PWAs may be suspended by the OS. Catch up as soon as they return.
+  setInterval(refreshApp, 30000);
+  document.addEventListener('visibilitychange', refreshApp);
+  window.addEventListener('focus', refreshApp);
+  window.addEventListener('online', refreshApp);
+});
+
+async function openNotificationChat(id) {
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,2048}$/.test(id)) return;
+  await chatsReady;
+  try {
+    let index = conversations.findIndex(chat => chat.id === id), before;
+    // An older notification may target a chat outside the first page.
+    while (index < 0) {
+      const page = await request(`chats?limit=100&sort=latest${before ? `&before=${encodeURIComponent(before)}` : ''}`);
+      const item = page.items.find(chat => chat.id === id);
+      if (item) {
+        index = conversations.push({ id: item.id, name: item.displayName, unreadCount: item.unreadCount, preview: '', time: formatTime(item.lastMessageAt), messages: null }) - 1;
+        buildChats();
+        break;
+      }
+      before = page.nextBefore;
+      if (!before) throw new Error('This notification’s conversation is no longer available');
+    }
+    openChat(index);
+    await loadMessages(conversations[index], true);
+  } catch (error) { $('status').textContent = error.message; }
+}
+const notificationChat = new URL(location.href).searchParams.get('chat');
+if (notificationChat) {
+  openNotificationChat(notificationChat);
+  history.replaceState(history.state, '', location.pathname);
+}

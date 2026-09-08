@@ -13,13 +13,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 )
 
-//go:embed web/index.html web/shell.css web/shell.js web/InterVariable.woff2 web/favicon.png web/apple-touch-icon.png web/manifest.webmanifest web/icon-192.png web/icon-512.png
+//go:embed web/index.html web/shell.css web/shell.js web/push.js web/sw.js web/InterVariable.woff2 web/favicon.png web/apple-touch-icon.png web/manifest.webmanifest web/icon-192.png web/icon-512.png
 var webFiles embed.FS
 
 func webHandler(api http.Handler) http.Handler {
@@ -28,7 +29,7 @@ func webHandler(api http.Handler) http.Handler {
 		panic(err)
 	}
 	mux := http.NewServeMux()
-	for _, pattern := range []string{"/attachments/", "/chats", "/chats/", "/messages/", "/send-session", "/link-preview"} {
+	for _, pattern := range []string{"/attachments/", "/chats", "/chats/", "/messages/", "/send-session", "/link-preview", "/push"} {
 		mux.Handle(pattern, api)
 	}
 	mux.HandleFunc("/manifest.webmanifest", func(w http.ResponseWriter, r *http.Request) {
@@ -142,6 +143,8 @@ func main() {
 	port := flag.Int("port", 8741, "loopback HTTP port")
 	contacts := flag.String("contacts", "", "handle-to-name JSON override; empty disables; default uses macOS Contacts")
 	pinsPath := flag.String("pins", "~/Library/Preferences/com.apple.messages.pinning.plist", "Messages pinning plist; empty disables")
+	configDir, _ := os.UserConfigDir()
+	pushPath := flag.String("push-state", filepath.Join(configDir, "Natterwire", "push.json"), "private Web Push state file; empty disables notifications")
 	flag.Parse()
 	if flag.NArg() != 0 || *port < 1 || *port > 65535 {
 		flag.Usage()
@@ -187,7 +190,33 @@ func main() {
 		}
 		defer d.db.Close()
 		d.nativeName = lookup
-		return serve(ctx, fmt.Sprintf("127.0.0.1:%d", *port), webHandler(newLinkPreviewAPI(newSendAPI(d, sendText))), ready)
+		var handler http.Handler = newLinkPreviewAPI(newSendAPI(d, sendText))
+		var push *pushAPI
+		if *pushPath != "" {
+			push, err = newPushAPI(d, handler, *pushPath)
+			if err != nil {
+				log.Print("notifications unavailable: could not load private push state")
+				push = nil
+			} else {
+				handler = push
+			}
+		}
+		pushCtx, cancel := context.WithCancel(ctx)
+		var pushDone chan struct{}
+		defer func() {
+			cancel()
+			if pushDone != nil {
+				<-pushDone
+			}
+		}()
+		return serve(ctx, fmt.Sprintf("127.0.0.1:%d", *port), webHandler(handler), func() {
+			// Start only after binding, so a second app cannot send duplicate pushes.
+			if push != nil {
+				pushDone = make(chan struct{})
+				go func() { defer close(pushDone); push.run(pushCtx) }()
+			}
+			ready()
+		})
 	}
 	if flag.NFlag() == 0 && nativeApplication(run) {
 		return

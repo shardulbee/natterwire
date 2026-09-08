@@ -1,10 +1,12 @@
-// Run in a fixture browser page with: agent-browser eval "$(cat api/tests/frontend.js)"
+// Run in a fixture browser page. The real polling test takes at least 31 seconds:
+// agent-browser eval "{ ($(cat api/tests/frontend.js)).then(r => window.frontendResult = r, e => window.frontendResult = {error: e.message}); 'started'; }"
+// After 35 seconds: agent-browser eval 'window.frontendResult'
 // Replaces in-memory conversations and mocks sends. Does not send real messages. Reload afterward.
 (async () => {
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
   const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
   conversations = Array.from({ length: 40 }, (_, i) => ({
-    id: `fixture-${i}`, name: `Test conversation ${i + 1}`, preview: 'Performance fixture', time: 'Today',
+    id: `fixture-${i}`, name: `Test conversation ${i + 1}`, unreadCount: i % 3, preview: 'Performance fixture', time: 'Today',
     messages: Array.from({ length: 100 }, (_, j) => [
       j % 2 ? 'You' : `Test conversation ${i + 1}`, '12:30',
       `Message ${j + 1}: Testing switching, scrolling and draft input with a full conversation.`,
@@ -30,6 +32,19 @@
   select(1);
   select(0);
   assert($('draft').value === 'Draft survives switching', 'Draft lost');
+  assert(buttons[0].querySelector('.unread').hidden, 'Read chat must not show an unread marker');
+  assert(buttons[1].getAttribute('aria-label') === 'Test conversation 2, unread in Mac Messages', 'Opening a chat must retain source unread state without announcing a count');
+  const dot = buttons[1].querySelector('.unread');
+  const summaryLeft = buttons[1].querySelector('.chat-summary').getBoundingClientRect().left;
+  for (const count of [1, 120, 0, null]) {
+    conversations[1].unreadCount = count;
+    updateChat(1);
+    assert(dot.hidden === !(count > 0) && dot.textContent === '', 'Unread must be a binary dot, never a number');
+    assert(buttons[1].querySelector('.chat-summary').getBoundingClientRect().left === summaryLeft, 'Unread changes must not shift conversation text');
+    if (count > 0) assert(dot.getBoundingClientRect().width === 8 && dot.getBoundingClientRect().height === 8, 'Unread dot must retain its size for any count');
+  }
+  conversations[1].unreadCount = 1;
+  updateChat(1);
   await frame();
   $('transcript').scrollTop = 0;
   $('draft').dispatchEvent(new Event('input'));
@@ -122,6 +137,58 @@
     fail = false;
     await loadMessages(chat, true);
   } finally { request = originalRequest; }
+
+  // Automatic refresh preserves the reader, drafts and search while discovering chats.
+  const active = conversations[selected];
+  const listed = conversations.map(chat => ({ id: chat.id, displayName: chat.name, unreadCount: chat.unreadCount, lastMessageAt: '2026-09-08T13:00:00Z' }));
+  listed.unshift({ id: 'new-chat', displayName: 'New arrival', lastMessageAt: '2026-09-08T14:00:00Z' });
+  let polls = 0, rejectPoll = false;
+  request = async path => {
+    if (path.startsWith('chats?')) {
+      polls++;
+      if (rejectPoll) throw new Error('Offline fixture');
+      return { items: listed };
+    }
+    return structuredClone(page);
+  };
+  try {
+    $('draft').value = 'Keep this draft';
+    $('draft').dispatchEvent(new Event('input'));
+    compose();
+    $('transcript').scrollTop = 150;
+    await refreshApp();
+    assert(conversations[0].id === 'new-chat' && conversations[selected] === active, 'Polling must discover chats without switching selection');
+    assert($('draft').value === 'Keep this draft' && document.activeElement === $('draft'), 'Polling must preserve draft and focus');
+    assert(Math.abs($('transcript').scrollTop - 150) < 2, 'Polling must preserve reading position');
+    assert(document.querySelectorAll('[aria-current="true"]').length === 1, 'Polling must retain selected row');
+    openSearch();
+    $('search').value = 'New arrival';
+    filterChats();
+    listed.find(chat => chat.id === active.id).unreadCount = 0;
+    await refreshApp();
+    assert($('search').value === 'New arrival' && visible.length === 1, 'Polling must preserve search');
+    assert(buttons[selected].querySelector('.unread').hidden, 'Read changes in Messages must clear the marker on refresh');
+    closeSearch();
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    const beforeHidden = polls;
+    await refreshApp();
+    assert(polls === beforeHidden, 'Hidden app must not poll');
+    delete document.hidden;
+    document.dispatchEvent(new Event('visibilitychange'));
+    while (refreshing) await frame();
+    assert(polls === beforeHidden + 1, 'Returning to the app must refresh immediately');
+    rejectPoll = true;
+    await refreshApp();
+    assert(!refreshing && conversations[selected] === active, 'Failed polling must retain content and allow retry');
+    rejectPoll = false;
+    const beforeTimer = polls;
+    await new Promise(resolve => setTimeout(resolve, 31000));
+    assert(polls > beforeTimer, '30-second timer must refresh automatically');
+  } finally {
+    delete document.hidden;
+    request = originalRequest;
+    for (const chat of conversations) chat.stale = false;
+  }
 
   // Same sender and calendar minute, never merely less than 60 seconds apart.
   const groupedChat = conversations[3];
