@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-//go:embed web/index.html web/shell.css web/shell.js web/InterVariable.woff2 web/favicon.png web/apple-touch-icon.png
+//go:embed web/index.html web/shell.css web/shell.js web/InterVariable.woff2 web/favicon.png web/apple-touch-icon.png web/manifest.webmanifest web/icon-192.png web/icon-512.png
 var webFiles embed.FS
 
 func webHandler(api http.Handler) http.Handler {
@@ -31,6 +31,10 @@ func webHandler(api http.Handler) http.Handler {
 	for _, pattern := range []string{"/attachments/", "/chats", "/chats/", "/messages/", "/send-session", "/link-preview"} {
 		mux.Handle(pattern, api)
 	}
+	mux.HandleFunc("/manifest.webmanifest", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/manifest+json")
+		http.ServeFileFS(w, r, assets, "manifest.webmanifest")
+	})
 	mux.Handle("/", http.FileServer(http.FS(assets)))
 	return mux
 }
