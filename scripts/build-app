@@ -9,14 +9,16 @@ fi
 
 output=""
 identity=""
+keychain=()
 reference="$HOME/Applications/Natterwire.app"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --output) output="${2:?--output requires a path}"; shift 2 ;;
     --sign) identity="${2:?--sign requires an identity}"; shift 2 ;;
+    --keychain) keychain=(--keychain "${2:?--keychain requires a path}"); shift 2 ;;
     --adhoc) identity="-"; shift ;;
     --reference) reference="${2:?--reference requires a path}"; shift 2 ;;
-    *) echo "Usage: scripts/build-app --output PATH [--sign IDENTITY | --adhoc] [--reference APP]" >&2; exit 2 ;;
+    *) echo "Usage: scripts/build-app --output PATH [--sign IDENTITY | --adhoc] [--keychain PATH] [--reference APP]" >&2; exit 2 ;;
   esac
 done
 [[ -n "$output" ]] || { echo "--output is required" >&2; exit 2; }
@@ -51,7 +53,7 @@ if [[ -z "$identity" ]]; then
     identity="${identity:--}"
   fi
 fi
-codesign --force --deep --sign "$identity" --timestamp=none "$app"
+codesign --force --deep --sign "$identity" ${keychain[@]+"${keychain[@]}"} --timestamp=none "$app"
 codesign --verify --deep --strict "$app"
 mkdir -p "$(dirname "$output")"
 mv "$app" "$output"

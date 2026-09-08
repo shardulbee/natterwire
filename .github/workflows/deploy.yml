@@ -14,12 +14,9 @@ permissions:
 
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/main'
-    runs-on: macos-15
+    if: github.repository == 'shardulbee/natterwire' && github.event.repository.private && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, macOS, ARM64, natterwire-turbogadget]
     timeout-minutes: 45
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,7 +30,7 @@ jobs:
             tui/go.sum
       - name: Test
         run: |
-          bash -n scripts/deploy-mac
+          bash -n scripts/build-app
           go -C api test -race ./...
           go -C api vet ./...
           go -C tui test -race ./...
@@ -55,40 +52,55 @@ jobs:
           security unlock-keychain -p "$password" "$keychain"
           security import "$work/signing.p12" -k "$keychain" -P "$P12_PASSWORD" -T /usr/bin/codesign >/dev/null
           security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
-          security list-keychains -d user -s "$keychain"
+          # Explicit signing scope leaves the user's search/default keychains intact.
           identity=5748468843D7D2316B51EF650D85B1ED8A1E7196
           mkdir -p "$RUNNER_TEMP/natterwire"
-          scripts/build-app --output "$RUNNER_TEMP/natterwire/Natterwire.app" --sign "$identity"
+          scripts/build-app --output "$RUNNER_TEMP/natterwire/Natterwire.app" --sign "$identity" --keychain "$keychain"
           CGO_ENABLED=0 go -C tui build -trimpath -o "$RUNNER_TEMP/natterwire/natterwire-tui" .
-          codesign --force --sign "$identity" --timestamp=none "$RUNNER_TEMP/natterwire/natterwire-tui"
-      # Federated trust: issuer https://token.actions.githubusercontent.com,
-      # subject repo:shardulbee@16765155/natterwire@1357292182:ref:refs/heads/main,
-      # auth_keys scope; GitHub's ID-qualified subject must match exactly.
-      # workflow_ref shardulbee/natterwire/.github/workflows/deploy.yml@refs/heads/main.
-      # Grant this tag only TurboGadget TCP22; macOS uses OpenSSH, not Tailscale SSH.
-      - uses: tailscale/github-action@v4
-        with:
-          oauth-client-id: ${{ secrets.TS_CLIENT_ID }}
-          audience: ${{ secrets.TS_AUDIENCE }}
-          tags: tag:natterwire-deploy
-      # Separately authorized bootstrap: install scripts/deploy-mac as shardul's
-      # ~/.local/libexec/natterwire-deploy, then authorize a dedicated public key with
-      # restrict,command="/Users/shardul/.local/libexec/natterwire-deploy".
-      # Pin the independently verified Mac host key in NATTERWIRE_KNOWN_HOSTS.
-      # Never reuse dotfiles' root key. Host validates signed artifacts, not source;
-      # preserve its TCC and keychain settings.
+          codesign --force --sign "$identity" --keychain "$keychain" --timestamp=none "$RUNNER_TEMP/natterwire/natterwire-tui"
       - name: Install signed app on TurboGadget
-        env:
-          SSH_KEY: ${{ secrets.NATTERWIRE_SSH_KEY }}
-          KNOWN_HOSTS: ${{ secrets.NATTERWIRE_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          umask 077
-          work=$(mktemp -d)
-          trap 'rm -rf "$work"' EXIT
-          printf '%s\n' "$SSH_KEY" > "$work/key"
-          printf '%s\n' "$KNOWN_HOSTS" > "$work/known_hosts"
-          tar -C "$RUNNER_TEMP/natterwire" -cf "$work/app.tar" Natterwire.app natterwire-tui
-          ssh -T -i "$work/key" -o IdentitiesOnly=yes -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$work/known_hosts" \
-            -o ConnectTimeout=30 shardul@100.69.181.114 "deploy $GITHUB_SHA" < "$work/app.tar"
+          [[ $(uname -s) == Darwin && $(id -un) == shardul ]]
+          work="$RUNNER_TEMP/natterwire"
+          app="$HOME/Applications/Natterwire.app"
+          incoming="$work/Natterwire.app"
+          backup="$HOME/Applications/Natterwire.app.previous"
+          requirement='=anchor apple generic and certificate leaf = H"5748468843D7D2316B51EF650D85B1ED8A1E7196"'
+          [[ ! -e "$backup" && ! -L "$backup" ]] || {
+            echo "Inspect retained backup before retrying: $backup" >&2; exit 1;
+          }
+          for signed in "$app" "$incoming" "$work/natterwire-tui"; do
+            [[ ! -L "$signed" ]]
+            codesign --verify --deep --strict -R "$requirement" "$signed"
+          done
+          [[ $(plutil -extract CFBundleIdentifier raw -o - "$incoming/Contents/Info.plist") == com.shardul.natterwire.api ]]
+          [[ $(plutil -extract CFBundleExecutable raw -o - "$incoming/Contents/Info.plist") == natterwire-api ]]
+          for binary in "$incoming/Contents/MacOS/natterwire-api" "$work/natterwire-tui"; do
+            go version -m "$binary" | grep -Fq "vcs.revision=$GITHUB_SHA"
+            "$binary" --help >/dev/null
+          done
+          # AppKit cancels Quit while the delegate stops its loop for Go cleanup.
+          /usr/bin/osascript <<'APPLESCRIPT'
+          try
+            if application id "com.shardul.natterwire.api" is running then tell application id "com.shardul.natterwire.api" to quit
+          on error errorMessage number errorNumber
+            if errorNumber is not -128 then error errorMessage number errorNumber
+          end try
+          APPLESCRIPT
+          for _ in {1..30}; do
+            pgrep -x natterwire-api >/dev/null || break
+            sleep 1
+          done
+          if pgrep -x natterwire-api >/dev/null; then
+            echo 'Natterwire did not quit; leaving installation untouched' >&2; exit 1
+          fi
+          mv "$app" "$backup"
+          mv "$incoming" "$app"
+          /usr/bin/open "$app"
+          curl --fail --silent --show-error --retry 15 --retry-connrefused --retry-delay 2 \
+            --max-time 5 --output /dev/null http://127.0.0.1:8741/send-session
+          # Retain the old bundle on failure until the replacement is healthy.
+          mv -f "$work/natterwire-tui" "$HOME/.local/bin/natterwire-tui"
+          rm -rf "$backup"
+          echo "Installed natterwire $GITHUB_SHA; relaunch existing TUI processes."
