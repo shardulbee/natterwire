@@ -31,7 +31,14 @@ for module in api tui; do
   go -C "$work/source/$module" vet ./...
 done
 
-/usr/bin/osascript -e 'if application id "com.shardul.natterwire.api" is running then tell application id "com.shardul.natterwire.api" to quit'
+# AppKit returns cancellation while our delegate stops its loop for Go cleanup.
+/usr/bin/osascript <<'APPLESCRIPT'
+try
+  if application id "com.shardul.natterwire.api" is running then tell application id "com.shardul.natterwire.api" to quit
+on error errorMessage number errorNumber
+  if errorNumber is not -128 then error errorMessage number errorNumber
+end try
+APPLESCRIPT
 # Do not replace the bundle while the previous executable is still running.
 for _ in {1..30}; do
   pgrep -x natterwire-api >/dev/null || break
