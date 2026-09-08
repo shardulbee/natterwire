@@ -190,6 +190,27 @@
     for (const chat of conversations) chat.stale = false;
   }
 
+  // Metadata must not stretch short bubbles; long text must still wrap.
+  const bubbleChat = conversations[3];
+  bubbleChat.messages = [
+    ['Test conversation 4', '3:26 PM', 'Stuff like that'],
+    ['You', '3:27 PM', 'OK'],
+    ['Test conversation 4', '3:28 PM', 'Long message text '.repeat(40)],
+  ].map(message => [...message, { sentAt: '2026-09-08T15:26:00Z' }]);
+  select(3);
+  for (const article of $('messages').querySelectorAll('.message')) {
+    const body = article.querySelector('p');
+    const bounds = body.getBoundingClientRect();
+    const parent = article.getBoundingClientRect();
+    assert(Math.abs(article.classList.contains('me') ? bounds.right - parent.right : bounds.left - parent.left) < 1, 'Bubble must retain sender alignment');
+    assert(body.scrollWidth <= body.clientWidth && bounds.width <= parent.width, 'Long bubbles must wrap without overflow');
+    if (body.textContent.length < 20) {
+      const range = document.createRange();
+      range.selectNodeContents(body);
+      assert(Math.abs(bounds.width - range.getBoundingClientRect().width - 20) < 1, 'Short bubbles must fit text plus padding, not metadata');
+    }
+  }
+
   // Same sender and calendar minute, never merely less than 60 seconds apart.
   const groupedChat = conversations[3];
   groupedChat.messages = [
