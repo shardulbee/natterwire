@@ -19,7 +19,7 @@ function loadQueuedMedia() {
       mediaLoading--;
       if (loaded) {
         item.frame.disabled = false;
-        item.frame.onclick = () => openImage(item.image);
+        item.frame.onclick = () => { if (!suppressMediaClick) openImage(item.image); };
       } else if (item.tries++ < 3 && item.frame.isConnected) {
         setTimeout(() => { mediaQueue.push(item); loadQueuedMedia(); }, item.tries * 400);
       } else if (item.frame.isConnected) {
@@ -79,8 +79,10 @@ function previewText(message, chat) {
   const [, , text, raw] = messageTuple(message, chat);
   const sender = raw.isFromMe ? 'You: ' : raw.sender && raw.sender !== chat.name ? `${raw.sender}: ` : '';
   const attachments = visibleAttachments(raw);
-  const attachment = attachments.length ? attachments.some(item => item.mimeType?.startsWith('image/') || item.width > 0 && item.height > 0) ? '[Image]' : '[Attachment]' : '';
-  return sender + (text || attachment);
+  if (text) return sender + text;
+  if (!attachments.length) return sender;
+  const author = raw.isFromMe ? 'You' : raw.sender || chat.name;
+  return `${author} sent ${attachments.some(item => item.mimeType?.startsWith('image/') || item.width > 0 && item.height > 0) ? 'an image' : 'an attachment'}`;
 }
 async function request(path, options) {
   const response = await fetch(path, options);
@@ -201,12 +203,13 @@ function appendMessage(fragment, chat, message, extraClass = '') {
         image.className = 'attachment-image';
         image.alt = attachment.filename ? `Image: ${attachment.filename}` : 'Image attachment';
         image.decoding = 'async';
+        image.draggable = false;
         if (attachment.width && attachment.height) {
           image.width = attachment.width;
           image.height = attachment.height;
         }
         frame.append(image);
-        frame.mediaItem = { frame, image, filename: attachment.filename, pluginPayload: attachment.filename?.toLowerCase().endsWith('.pluginpayloadattachment'), url: `attachments/${encodeURIComponent(attachment.mediaID)}?version=${encodeURIComponent(attachment.version)}`, tries: 0 };
+        frame.mediaItem = { frame, image, filename:attachment.filename, pluginPayload:attachment.filename?.toLowerCase().endsWith('.pluginpayloadattachment'), url:`attachments/${encodeURIComponent(attachment.mediaID)}?version=${encodeURIComponent(attachment.version)}`, tries:0 };
         mediaObserver.observe(frame);
         media.append(frame);
       } else media.append(fallback());
@@ -336,7 +339,7 @@ function select(index, open = true) {
   if (open) document.body.classList.add('chat-open');
   if (selected >= 0) buttons[selected].removeAttribute('aria-current');
   selected = index;
-  buttons[index].setAttribute('aria-current', 'true');
+  if (!mobile.matches || open) buttons[index].setAttribute('aria-current', 'true');
   const chat = conversations[index];
   $('name').textContent = chat.name;
   $('draft').value = drafts.get(chat.id) || '';
@@ -350,6 +353,8 @@ function select(index, open = true) {
 function openChat(index) {
   if (!mobile.matches || document.body.classList.contains('chat-open')) return select(index);
   select(index, false);
+  buttons[index].setAttribute('aria-current', 'true');
+  history.pushState({ ...history.state, natterwireChat: true }, '');
   document.body.classList.add('chat-open');
   $('name').focus({ preventScroll: true });
 }
@@ -357,10 +362,27 @@ function compose() { $('draft').focus(); }
 function showIndex() {
   $('draft').blur();
   document.body.classList.remove('chat-open');
+  if (mobile.matches) buttons[selected]?.removeAttribute('aria-current');
   buttons[selected]?.focus({ preventScroll: true });
 }
-$('back').onclick = showIndex;
-let swipe;
+let appHistoryNavigation = false;
+function closeChat() {
+  if (history.state?.natterwireChat) {
+    appHistoryNavigation = true;
+    history.back();
+  }
+  else showIndex();
+}
+$('back').onclick = closeChat;
+window.addEventListener('popstate', () => {
+  const nativeNavigation = !appHistoryNavigation;
+  appHistoryNavigation = false;
+  if (nativeNavigation) document.documentElement.classList.add('native-history');
+  if (history.state?.natterwireChat) document.body.classList.add('chat-open');
+  else showIndex();
+  if (nativeNavigation) requestAnimationFrame(() => requestAnimationFrame(() => document.documentElement.classList.remove('native-history')));
+});
+let swipe, suppressMediaClick = false;
 $('transcript').onpointerdown = event => {
   if (mobile.matches && event.pointerType === 'touch' && event.isPrimary) {
     swipe = { x: event.clientX, y: event.clientY };
@@ -370,7 +392,12 @@ $('transcript').onpointerdown = event => {
 $('transcript').onpointerup = event => {
   if (swipe) {
     const dx = event.clientX - swipe.x, dy = event.clientY - swipe.y;
-    if (dx > 80 && Math.abs(dy) < 40 && dx > Math.abs(dy) * 2) showIndex();
+    if (dx > 56 && Math.abs(dy) < 56 && dx > Math.abs(dy) * 1.5) {
+      suppressMediaClick = true;
+      event.preventDefault();
+      closeChat();
+      setTimeout(() => { suppressMediaClick = false; });
+    }
   }
   swipe = null;
 };
@@ -383,7 +410,7 @@ $('app').addEventListener('wheel', event => {
   clearTimeout(trackpadTimer);
   if (Math.abs(trackpadX) > 80) {
     trackpadX = 0;
-    showIndex();
+    closeChat();
   }
   trackpadTimer = setTimeout(() => { trackpadX = 0; }, 200);
 }, { passive: false });
@@ -398,9 +425,9 @@ $('lightbox').onclose = () => {
   $('lightbox').sourceFrame = null;
 };
 function openSearch() {
-  if (mobile.matches) showIndex();
+  if (mobile.matches) closeChat();
   $('search-panel').classList.add('is-open');
-  $('brand').setAttribute('aria-hidden', 'true');
+  if (!mobile.matches) $('brand').setAttribute('aria-hidden', 'true');
   for (const control of [$('search'), $('close-search')]) {
     control.disabled = false;
     control.removeAttribute('aria-hidden');
