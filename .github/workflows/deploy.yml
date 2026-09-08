@@ -15,7 +15,7 @@ permissions:
 jobs:
   deploy:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     timeout-minutes: 45
     permissions:
       contents: read
@@ -38,6 +38,29 @@ jobs:
           go -C api vet ./...
           go -C tui test -race ./...
           go -C tui vet ./...
+      # Personal Apple Development identity only; no distribution or notarization.
+      - name: Build and sign
+        env:
+          P12: ${{ secrets.NATTERWIRE_SIGNING_P12 }}
+          P12_PASSWORD: ${{ secrets.NATTERWIRE_SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          work=$(mktemp -d)
+          keychain="$work/signing.keychain-db"
+          trap 'security delete-keychain "$keychain" 2>/dev/null || true; rm -rf "$work"' EXIT
+          password=$(openssl rand -hex 32)
+          printf '%s' "$P12" | base64 --decode > "$work/signing.p12"
+          security create-keychain -p "$password" "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$work/signing.p12" -k "$keychain" -P "$P12_PASSWORD" -T /usr/bin/codesign >/dev/null
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain"
+          identity=5748468843D7D2316B51EF650D85B1ED8A1E7196
+          mkdir -p "$RUNNER_TEMP/natterwire"
+          scripts/build-app --output "$RUNNER_TEMP/natterwire/Natterwire.app" --sign "$identity"
+          CGO_ENABLED=0 go -C tui build -trimpath -o "$RUNNER_TEMP/natterwire/natterwire-tui" .
+          codesign --force --sign "$identity" --timestamp=none "$RUNNER_TEMP/natterwire/natterwire-tui"
       # Federated trust: issuer https://token.actions.githubusercontent.com,
       # subject repo:shardulbee@16765155/natterwire@1357292182:ref:refs/heads/main,
       # auth_keys scope; GitHub's ID-qualified subject must match exactly.
@@ -52,9 +75,9 @@ jobs:
       # ~/.local/libexec/natterwire-deploy, then authorize a dedicated public key with
       # restrict,command="/Users/shardul/.local/libexec/natterwire-deploy".
       # Pin the independently verified Mac host key in NATTERWIRE_KNOWN_HOSTS.
-      # Never reuse dotfiles' root key. Uploaded code inherits shardul's privileges;
-      # the forced command is not a sandbox. Preserve TCC and keychain settings.
-      - name: Deploy source to TurboGadget
+      # Never reuse dotfiles' root key. Host validates signed artifacts, not source;
+      # preserve its TCC and keychain settings.
+      - name: Install signed app on TurboGadget
         env:
           SSH_KEY: ${{ secrets.NATTERWIRE_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.NATTERWIRE_KNOWN_HOSTS }}
@@ -65,8 +88,7 @@ jobs:
           trap 'rm -rf "$work"' EXIT
           printf '%s\n' "$SSH_KEY" > "$work/key"
           printf '%s\n' "$KNOWN_HOSTS" > "$work/known_hosts"
-          # A complete bundle retains Go's VCS revision without host GitHub access.
-          git bundle create "$work/source.bundle" HEAD
+          tar -C "$RUNNER_TEMP/natterwire" -cf "$work/app.tar" Natterwire.app natterwire-tui
           ssh -T -i "$work/key" -o IdentitiesOnly=yes -o BatchMode=yes \
             -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$work/known_hosts" \
-            -o ConnectTimeout=30 shardul@100.69.181.114 "deploy $GITHUB_SHA" < "$work/source.bundle"
+            -o ConnectTimeout=30 shardul@100.69.181.114 "deploy $GITHUB_SHA" < "$work/app.tar"
