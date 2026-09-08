@@ -19,7 +19,6 @@
 }
 - (void)openWindow:(id)sender { [self showWindow]; }
 - (void)quitFromStatusMenu:(id)sender { [NSApp terminate:sender]; }
-- (void)applicationDidFinishLaunching:(NSNotification *)note { [self showWindow]; }
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)app { return NO; }
 - (void)refreshContactsStatus {
     if (![[NSBundle mainBundle] objectForInfoDictionaryKey:@"NSContactsUsageDescription"]) {

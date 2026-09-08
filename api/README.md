@@ -1,25 +1,24 @@
 # Natterwire API
 
-Go HTTP service using pure-Go SQLite. The macOS build uses cgo for its native Contacts bridge; Linux remains a `CGO_ENABLED=0` build with no Contacts integration. The [TUI](../tui/README.md) uses the same API on both platforms.
+Loopback-only Go service on port 8741, with an [embedded browser client](web/README.md). Reads Messages through read-only SQLite; sends through Messages.app on macOS. No authentication: restrict Tailscale access to trusted devices and never expose it publicly.
 
-## Build and run
+## macOS setup
 
-From the repository root:
+Requires Go 1.25+ and Xcode command-line tools. Quit Natterwire, then run `scripts/install.sh` and open `~/Applications/Natterwire.app`. The installer reuses the existing signing identity; `--sign IDENTITY` or `--adhoc` overrides it. It removes the legacy LaunchAgent but does not start the app.
+
+The app starts without a window. Use the menu-bar fox → Open Natterwire for status and permission settings, or Quit Natterwire to stop the API. Closing the window leaves the API running.
+
+Grant the installed app Full Disk Access for Messages, Contacts access for names, and Automation access for sending through Messages. Messages access retries automatically after permission changes. Updates may require re-adding the app to Full Disk Access. Do not grant access to a shell or disable TCC.
+
+For remote/browser access, run `tailscale serve --bg 8741` and use its HTTPS URL. Quit before running `scripts/uninstall.sh`; unrecognized pre-Go app backups are retained. Installation details live in [install.sh](../scripts/install.sh) and [build-app](../scripts/build-app).
+
+## Linux fixture workflow
+
+Linux supports fixture reads and fake-sender tests, not native Contacts or sending. From the repository root:
 
 ```sh
 go -C api build -o bin/natterwire-api .
 go -C tui build -o bin/natterwire-tui .
-api/bin/natterwire-api --help
-api/bin/natterwire-api
-```
-
-The service embeds the [browser client](web/README.md) at `/` and binds only to `127.0.0.1`, port 8741 by default. `--port` selects another port, not another interface. `--db` overrides `NATTERWIRE_DB_PATH`, then `MESSAGES_DB_PATH`, then `~/Library/Messages/chat.db`. It opens SQLite with `mode=ro` and `query_only`, not `immutable`, so live WAL updates remain visible. Missing databases are not created. Copies of live databases must include a consistent WAL snapshot; use SQLite's backup facility rather than copying only `chat.db` while Messages is running.
-
-## Linux fixture workflow
-
-Python 3 is needed only to create the fixture. Use the real API, not TUI demo mode:
-
-```sh
 python3 scripts/create-fixture.py /tmp/natterwire-fixture.db
 api/bin/natterwire-api --db /tmp/natterwire-fixture.db \
   --contacts api/testdata/contacts.json --pins '' --push-state ''
@@ -27,69 +26,22 @@ api/bin/natterwire-api --db /tmp/natterwire-fixture.db \
 tui/bin/natterwire-tui
 ```
 
-The fixture refuses to overwrite an existing file. It includes archived text, duplicate timestamps, hidden system rows, groups, and an attachment with unavailable bytes. The test suite also creates temporary attachment files and XML/binary pinning plists.
+Use `api/bin/natterwire-api --help` for flags. Explicit flags run the foreground CLI; quit the Mac app first to avoid a port conflict. For live database copies, use SQLite backup rather than copying `chat.db` without its WAL.
 
-## macOS installation and migration
+## Source and contracts
 
-Run `scripts/install.sh` from an interactive terminal. It builds and signs `~/Applications/Natterwire.app`, links `~/.local/bin/natterwire-api` to the app's only executable, and installs the TUI. It also stops and removes the LaunchAgent left by older releases; it does not register or start anything. The installer tries to reuse the prior Apple Development identity; `--sign IDENTITY` selects one and `--adhoc` uses ad-hoc signing. An unrecognized old app is moved once to `~/Applications/Natterwire.app.pre-go`, never silently deleted.
-
-Quit Natterwire before installing or updating so it releases port 8741, then open `Natterwire.app` from Finder. Quit the app to stop the API and reopen it to start again. Do not open the retained backup while Natterwire is running.
-
-The app lives in the menu bar with a monochrome fox icon and no Dock icon. Its window shows separate access checkmarks for Messages and Contacts and stays open until you dismiss it. Closing the window keeps the API running. Click the menu bar fox and choose Open Natterwire to reopen the window, or Quit Natterwire to stop the app and API. ⌘Q also quits while the window is focused.
-
-The app guides you to System Settings when Full Disk Access is missing and requests Contacts access. Add `~/Applications/Natterwire.app` under Privacy & Security → Full Disk Access. The app retries the Messages database every two seconds, so leave it open after granting access. If macOS itself asks you to Quit & Reopen, use that normal app action; no service commands are needed. Declining Contacts access only leaves names unresolved.
-
-Running `natterwire-api` with explicit command-line flags remains a foreground CLI workflow. Quit the app first to avoid a port conflict.
-
-Full Disk Access is tied to macOS TCC's executable identity and may not transfer to an updated app even when the signing certificate is reused. Re-add the installed app if necessary. Do not grant blanket access to a shell or disable TCC. Quit Natterwire before running `scripts/uninstall.sh`; it removes only a recognized app and command links while retaining the pre-Go backup. `--purge` also removes legacy logs. The installer does not change Tailscale or privacy settings.
-
-## Contacts and pins
-
-On macOS, the native Contacts bridge requests permission on first use and updates the in-memory name map when Contacts changes. No contact export is written. An explicit `--contacts PATH` overrides native Contacts with a JSON dictionary; `--contacts ''` disables names. Linux has no native default, but accepts the same explicit JSON file. Emails are case-insensitive and phone matching uses normalized digits with a last-ten-digit fallback.
-
-Native access requires the app bundle's Contacts usage description. Bare command-line builds fall back to raw handles. Declining Contacts permission does not stop the API; granting or revoking access updates names on subsequent lookups. Contacts permission is requested at launch, independently of Messages access.
-
-Pins load once from `~/Library/Preferences/com.apple.messages.pinning.plist`, using `pD.pP`. Both binary and XML plists work. `--pins PATH` overrides it; `--pins ''` disables it. Missing or inaccessible default preferences fall back to activity order. Restart after changing pins.
-
-## API contract
-
-- Text sending uses Messages.app; see [sending](#sending). The database remains read-only.
-- `GET /chats`, `GET /chats/:identifier/messages`, and alias `GET /messages/:identifier` retain the former JSON fields and URL-safe base64 chat IDs.
-- Lists return `items` and nullable `nextBefore`. Limits are 1–100, default 50. Ranked `v2` chat cursors preserve saved pin order, then newest activity and descending row ID. `GET /chats?sort=latest` ignores pins; keep that parameter on subsequent pages. Legacy recency cursors still work. Message cursors use date and row ID, newest first.
-- Reactions, group actions, system items, deleted messages, and rows without a date/content are excluded when the schema supplies those fields. Archived/deleted chats are omitted from the chat list. As before, a known identifier can still query their messages.
-- Contact names override direct-chat labels. Named groups retain their label; unnamed groups join deduplicated participant names or handles in database order. Empty groups return `Group chat`.
-- Plain `text`, including an empty string, takes precedence over `attributedBody`. The Go decoder reads typedstream v4 NSString and mutable/immutable NSAttributedString backing text, with class references, both endiannesses, and 1/2/4-byte lengths. It does not decode formatting attributes or keyed archives. Unsupported or malformed bodies retain their row with `text: ""`, as before. This is a prefix decoder, not a validator for the trailing attribute graph. Synthetic tests are not proof of coverage for every Apple archive variant; live macOS comparison remains necessary.
-- Attachments retain IDs, optional filenames/MIME types, and base64 original bytes up to 10 MiB. Unavailable or oversized files omit `dataBase64`; local paths are not exposed. Text-only messages return `attachments: []`.
-- `media=metadata` omits inline bytes and supplies opaque `mediaID`, file `version`, and oriented image dimensions. `GET /attachments/:mediaID?version=...` returns display bytes, with a 32 MiB limit and 128 MiB LRU cache. Missing images return 404, stale or omitted versions 409, oversized images 413. At most two media requests run concurrently; excess requests return 503 without blocking metadata requests.
-- HEIC display JPEGs use `displayDataBase64`, preserving full resolution and HEIF rotation/mirroring. The embedded WASM decoder runs on Linux and macOS without a native library. Images over 32 megapixels or unsupported images omit the display copy. EXIF-only orientation without HEIF transform properties is not applied; live Apple image parity remains unverified.
-- JPEG EXIF orientation is applied to binary display images and advertised dimensions. Original inline bytes remain unchanged.
-
-## Sending
-
-Reads and sends trust local processes and devices permitted by the Tailscale policy for the Mac's TCP 8741. There is no application-level authentication or credential setup. Keep the loopback bind and restrict Tailscale Serve access to intended personal devices; do not expose this API publicly.
-
-`tailscale serve --bg 8741` exposes the browser client and API together at the Mac's portless HTTPS tailnet URL. Check it with `tailscale serve status`.
-
-Both send routes accept non-browser clients and exact same-origin browser requests, including HTTPS requests forwarded by the trusted loopback proxy. Cross-origin browser requests are rejected. The session nonce protects against stale retries, not unauthorized access:
-
-1. `GET /send-session` returns `{"session":"…"}` for this API run.
-2. `POST /chats/:identifier/messages` takes `Content-Type: application/json`, `{"text":"Hello"}`, and `Idempotency-Key: SESSION:UNIQUE_RANDOM_ID`. Text must be nonblank, at most 16000 UTF-8 bytes, with no NUL. No other fields are accepted.
-
-A 200 response with `{"accepted":true,"error":""}` means the AppleScript command completed, not that the message was delivered. The Mac runs `/usr/bin/osascript` against an existing Messages chat whose ID exactly matches the database GUID. Missing or ambiguous matches fail, with no fallback to recipients or new chats. Linux returns an explicit unsupported error and never simulates delivery.
-
-Retain the same request ID and text for every retry. Concurrent duplicates return 409 while pending; completed duplicates replay the result without invoking Messages again. Failures and timeouts may be ambiguous and are retained too. Old sessions are rejected after API restart. Each session allows 10000 attempts without eviction. This is not durable delivery tracking: after losing a request ID, check Messages before making another request. Never automatically retry with a new ID.
-
-The signed app includes an Automation usage description. Allow Natterwire to control Messages when macOS prompts, or check Privacy & Security → Automation. The current app is not sandboxed or hardened-runtime signed, so no new entitlement is required. Actual AppleScript ID parity for direct and group chats, permission attribution to the signed app, denial handling, and delivery must be checked on macOS with explicit authorization. Orbs support the real read API, SQLite fixtures, fake-sender endpoint tests, and TUI checks, not AppleScript delivery.
+- [Routes](main.go), [queries and pagination](database.go), [API tests](api_test.go).
+- [Sending and idempotency](send.go), [send tests](send_test.go), [Messages adapter](send_darwin.go). Ambiguous failures must retry the same request ID; IDs expire on restart. Never blindly resend after losing an ID.
+- [Body decoding](body.go), [decoder tests](body_test.go), [images](image.go), [media tests](media_test.go).
+- [Native app](application_darwin.m), [Contacts](contacts_darwin.m).
 
 ## Tests
 
+Run the [required Go checks](../AGENTS.md), then optional decoder and end-to-end checks from the repository root:
+
 ```sh
-go -C api test -race ./...
-go -C api vet ./...
 go -C api test -run '^$' -fuzz FuzzBody -fuzztime 10s
-go -C tui test -race ./...
-go -C tui vet ./...
 tui/.venv/bin/python tui/tests/integration.py api/bin/natterwire-api tui/bin/natterwire-tui
 ```
 
-Build both binaries first and install the [TUI test dependencies](../tui/README.md#checks) for the integration check. It runs the real service and TUI in a PTY and checks archived text, naming, drafts, live SQLite WAL updates, and shutdown. Linux tests cannot verify macOS TCC, the app lifecycle, code signing, the Contacts adapter, or decoding parity against a live Messages database.
+Build both binaries and install the [TUI test dependencies](../tui/README.md#checks) first. Linux cannot verify macOS permissions, app lifecycle, signing, native Contacts, or live Messages decoding. Mac checks require isolated source/build directories; installation, service restarts, and real message sends require authorization.
