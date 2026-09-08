@@ -1,0 +1,71 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: natterwire-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache-dependency-path: |
+            api/go.sum
+            tui/go.sum
+      - name: Test
+        run: |
+          bash -n scripts/deploy-mac
+          go -C api test -race ./...
+          go -C api vet ./...
+          go -C tui test -race ./...
+          go -C tui vet ./...
+      # Federated trust: issuer https://token.actions.githubusercontent.com,
+      # subject repo:shardulbee/natterwire:ref:refs/heads/main, auth_keys scope,
+      # workflow_ref shardulbee/natterwire/.github/workflows/deploy.yml@refs/heads/main.
+      # Grant this tag only TurboGadget TCP22; macOS uses OpenSSH, not Tailscale SSH.
+      - uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: tag:natterwire-deploy
+      # Separately authorized bootstrap: install scripts/deploy-mac as shardul's
+      # ~/.local/libexec/natterwire-deploy, then authorize a dedicated public key with
+      # restrict,command="/Users/shardul/.local/libexec/natterwire-deploy".
+      # Pin the independently verified Mac host key in NATTERWIRE_KNOWN_HOSTS.
+      # Never reuse dotfiles' root key. Uploaded code inherits shardul's privileges;
+      # the forced command is not a sandbox. Preserve TCC and keychain settings.
+      - name: Deploy source to TurboGadget
+        env:
+          SSH_KEY: ${{ secrets.NATTERWIRE_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.NATTERWIRE_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$work/key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$work/known_hosts"
+          # A complete bundle retains Go's VCS revision without host GitHub access.
+          git bundle create "$work/source.bundle" HEAD
+          ssh -T -i "$work/key" -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$work/known_hosts" \
+            -o ConnectTimeout=30 shardul@100.69.181.114 "deploy $GITHUB_SHA" < "$work/source.bundle"

@@ -1,0 +1,57 @@
+#!/bin/bash
+set -euo pipefail
+
+# Install a reviewed copy as ~/.local/libexec/natterwire-deploy, then use it
+# as this app's dedicated SSH key's forced command. Never run as root.
+[[ ${SSH_ORIGINAL_COMMAND:-} =~ ^deploy\ ([0-9a-f]{40})$ ]] || {
+  echo 'Expected: deploy <commit SHA>' >&2; exit 2;
+}
+revision=${BASH_REMATCH[1]}
+[[ $(uname -s) == Darwin && $(id -un) == shardul ]] || {
+  echo 'Deployment requires the shardul macOS login session' >&2; exit 1;
+}
+export PATH="/etc/profiles/per-user/shardul/bin:$HOME/.nix-profile/bin:/run/current-system/sw/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+umask 077
+work=$(mktemp -d "${TMPDIR:-/tmp}/natterwire-deploy.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+cat > "$work/source.bundle"
+git clone --quiet --no-checkout "$work/source.bundle" "$work/source"
+[[ $(git -C "$work/source" rev-parse HEAD) == "$revision" ]]
+git -C "$work/source" checkout --quiet --detach "$revision"
+
+app="$HOME/Applications/Natterwire.app"
+# Fail closed rather than replacing the existing TCC identity with ad-hoc signing.
+identity=$(codesign -dvv "$app" 2>&1 | sed -n 's/^Authority=//p' | head -1)
+[[ $identity == 'Apple Development:'* ]] || {
+  echo 'Existing Apple Development signing identity required; bootstrap manually' >&2; exit 1;
+}
+security find-identity -v -p codesigning | grep -Fq "\"$identity\""
+for module in api tui; do
+  go -C "$work/source/$module" test -race ./...
+  go -C "$work/source/$module" vet ./...
+done
+
+/usr/bin/osascript -e 'if application id "com.shardul.natterwire.api" is running then tell application id "com.shardul.natterwire.api" to quit'
+# Do not replace the bundle while the previous executable is still running.
+for _ in {1..30}; do
+  pgrep -x natterwire-api >/dev/null || break
+  sleep 1
+done
+if pgrep -x natterwire-api >/dev/null; then
+  echo 'Natterwire did not quit; leaving installation untouched' >&2; exit 1
+fi
+"$work/source/scripts/install.sh" --sign "$identity"
+codesign --verify --deep --strict "$app"
+[[ $(plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist") == com.shardul.natterwire.api ]]
+[[ $(plutil -extract CFBundleExecutable raw -o - "$app/Contents/Info.plist") == natterwire-api ]]
+[[ -s "$app/Contents/Resources/NatterwireIcon.icns" ]]
+[[ $(find "$app/Contents/MacOS" -type f | wc -l | tr -d ' ') == 1 ]]
+for binary in "$app/Contents/MacOS/natterwire-api" "$HOME/.local/bin/natterwire-tui"; do
+  go version -m "$binary" | grep -Fq "vcs.revision=$revision"
+  "$binary" --help >/dev/null
+done
+/usr/bin/open "$app"
+# This exercises HTTP without printing chats, contacts, or session tokens.
+curl --fail --silent --show-error --retry 15 --retry-connrefused --retry-delay 2 \
+  --max-time 5 --output /dev/null http://127.0.0.1:8741/send-session
+echo "Installed natterwire $revision; relaunch existing TUI processes."

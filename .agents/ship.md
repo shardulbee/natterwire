@@ -1,7 +1,7 @@
-Ship the changes to `origin/main` and deploy changed components on the Mac.
+When shipping is authorized, push to `origin/main`; [Deploy](../.github/workflows/deploy.yml) tests and deploys the API and TUI on TurboGadget.
 
 - Commit uncommitted changes, fetch origin, and rebase onto `origin/main`. Ask before resolving substantive conflicts. Run the full relevant Go test suites before pushing. Only ignore failures reproduced on unchanged `origin/main`.
 - Push to `origin/main`. If rejected, fetch and rebase again; repeat tests only if conflict resolution or other local edits changed files after the successful run.
-- For TUI changes, use the Mac runner to build the pushed revision in an isolated directory and atomically replace `~/Documents/natterwire/tui/bin/natterwire-tui`. Preserve the Mac's local checkout and running sessions. Verify the installed revision with `go version -m` and check `--help`. Tell the user to relaunch existing TUI processes.
-- For API changes, first quit Natterwire, then use the Mac runner to run `scripts/install.sh` from the pushed revision in an isolated source directory. This installs `~/Applications/Natterwire.app` and its `~/.local/bin/natterwire-api` symlink without starting the app. Preserve the Apple Development signing identity and the Mac's local checkout. Launch the installed app through the normal macOS app mechanism, then verify the bundle name, fox icon, sole executable, signature, visible window, and live API without printing private data. Never change privacy permissions; report permission or signing blockers.
-- Clean temporary build directories and report the pushed revision, test results, deployed binary, and any remaining deployment step. Do not archive threads unless the current request asks for it.
+- Check the Actions result for the pushed revision. Do not deploy from an orb or modify the Mac's personal checkout.
+- Report signing, keychain, GUI-session, or privacy blockers; failed installation can leave the app stopped. After deployment, verify the visible app window and fox icon on the Mac. Tell the user to relaunch existing TUI processes using `~/.local/bin/natterwire-tui`.
+- Report the revision, test results, Actions run, and any remaining step. Do not archive threads unless asked.
