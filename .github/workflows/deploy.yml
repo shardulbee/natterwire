@@ -46,6 +46,15 @@ jobs:
           work=$(mktemp -d)
           keychain="$work/signing.keychain-db"
           trap 'security delete-keychain "$keychain" 2>/dev/null || true; rm -rf "$work"' EXIT
+          cat > "$work/state.swift" <<'SWIFT'
+          import Security
+          var keychain: SecKeychain?
+          let opened = SecKeychainOpen(CommandLine.arguments[1], &keychain)
+          var state: SecKeychainStatus = 0
+          let status = keychain.map { SecKeychainGetStatus($0, &state) } ?? opened
+          print("temporary keychain open=\(opened) status=\(status) flags=\(state)")
+          SWIFT
+          swiftc "$work/state.swift" -o "$work/state"
           password=$(openssl rand -hex 32)
           printf '%s' "$P12" | base64 --decode > "$work/signing.p12"
           security create-keychain -p "$password" "$keychain"
@@ -54,11 +63,28 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
           # Explicit signing scope leaves the user's search/default keychains intact.
           identity=5748468843D7D2316B51EF650D85B1ED8A1E7196
+          security show-keychain-info "$keychain"
+          security find-identity -v -p codesigning "$keychain"
+          "$work/state" "$keychain"
+          export SIGNING_STATE="$work/state" SIGNING_KEYCHAIN="$keychain" SIGNING_PASSWORD="$password"
+          codesign() {
+            if [[ " $* " != *' --sign '* ]]; then /usr/bin/codesign "$@"; return; fi
+            printf 'codesign argument: <%q>\n' "$@"
+            "$SIGNING_STATE" "$SIGNING_KEYCHAIN"
+            if /usr/bin/codesign "$@"; then return; else result=$?; fi
+            "$SIGNING_STATE" "$SIGNING_KEYCHAIN"
+            security unlock-keychain -p "$SIGNING_PASSWORD" "$SIGNING_KEYCHAIN"
+            "$SIGNING_STATE" "$SIGNING_KEYCHAIN"
+            if /usr/bin/codesign "$@"; then echo 'Immediate temporary-keychain unlock retry succeeded'; fi
+            return "$result"
+          }
+          export -f codesign
           mkdir -p "$RUNNER_TEMP/natterwire"
           scripts/build-app --output "$RUNNER_TEMP/natterwire/Natterwire.app" --sign "$identity" --keychain "$keychain"
           CGO_ENABLED=0 go -C tui build -trimpath -o "$RUNNER_TEMP/natterwire/natterwire-tui" .
           codesign --force --sign "$identity" --keychain "$keychain" --timestamp=none "$RUNNER_TEMP/natterwire/natterwire-tui"
       - name: Install signed app on TurboGadget
+        if: false # Diagnostic run must not install, even if signing unexpectedly succeeds.
         run: |
           set -euo pipefail
           [[ $(uname -s) == Darwin && $(id -un) == shardul ]]
