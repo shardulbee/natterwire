@@ -38,21 +38,9 @@ jobs:
           go -C api vet ./...
           go -C tui test -race ./...
           go -C tui vet ./...
-      - name: Inspect OIDC claims
-        env:
-          TS_AUDIENCE: ${{ secrets.TS_AUDIENCE }}
-        run: |
-          node --input-type=module <<'JS'
-          const url = new URL(process.env.ACTIONS_ID_TOKEN_REQUEST_URL);
-          url.searchParams.set('audience', process.env.TS_AUDIENCE);
-          const response = await fetch(url, {headers: {Authorization: `Bearer ${process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}`}});
-          if (!response.ok) throw new Error(`OIDC request failed: ${response.status}`);
-          const {value} = await response.json();
-          const claims = JSON.parse(Buffer.from(value.split('.')[1], 'base64url'));
-          console.log(JSON.stringify(Object.fromEntries(['aud', 'sub', 'iss', 'workflow_ref', 'repository', 'ref'].map(key => [key, claims[key]]))));
-          JS
       # Federated trust: issuer https://token.actions.githubusercontent.com,
-      # subject repo:shardulbee/natterwire:ref:refs/heads/main, auth_keys scope,
+      # subject repo:shardulbee@16765155/natterwire@1357292182:ref:refs/heads/main,
+      # auth_keys scope; GitHub's ID-qualified subject must match exactly.
       # workflow_ref shardulbee/natterwire/.github/workflows/deploy.yml@refs/heads/main.
       # Grant this tag only TurboGadget TCP22; macOS uses OpenSSH, not Tailscale SSH.
       - uses: tailscale/github-action@v4
