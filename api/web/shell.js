@@ -37,7 +37,7 @@ function loadQueuedMedia() {
         if (item.pluginPayload) {
           const article = item.frame.closest('.message');
           item.frame.remove();
-          if (!article.querySelector('p, .attachment-frame, .attachment-file')) article.hidden = true;
+          if (!article.querySelector('p, .link-card, .attachment-frame, .attachment-file')) article.hidden = true;
         } else {
           const fallback = document.createElement('span');
           fallback.className = 'attachment-file';
@@ -191,6 +191,67 @@ async function fetchMessages(chat, refresh) {
     if (preserveScroll) transcript.scrollTop = transcript.scrollHeight - bottomOffset;
   }
 }
+function messageLinks(text) {
+  const links = [];
+  for (const match of text.matchAll(/\b(?:https?:\/\/|www\.)[^\s<>"\uFFFC]+/gi)) {
+    if (match.index && /[\w@/]/.test(text[match.index - 1])) continue;
+    let label = match[0].replace(/[.,!?:;'”’]+$/, '');
+    for (const [open, close] of [['(', ')'], ['[', ']'], ['{', '}']]) {
+      while (label.endsWith(close) && label.split(close).length > label.split(open).length) label = label.slice(0, -1);
+    }
+    try {
+      const url = new URL(/^www\./i.test(label) ? `https://${label}` : label);
+      if (!url.hostname || url.username || url.password) continue;
+      links.push({ index: match.index, label, url });
+    } catch {}
+  }
+  return links;
+}
+function externalLink(url) {
+  const link = document.createElement('a');
+  link.href = url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  return link;
+}
+const linkObserver = new IntersectionObserver(entries => {
+  for (const entry of entries) if (entry.isIntersecting) {
+    linkObserver.unobserve(entry.target);
+    loadLinkPreview(entry.target);
+  }
+}, { root: $('transcript'), rootMargin: '100px' });
+async function loadLinkPreview(card) {
+  if (card.previewLoaded) return;
+  card.previewLoaded = true;
+  try {
+    const metadata = await request(`link-preview?url=${encodeURIComponent(card.href)}`);
+    const transcript = $('transcript');
+    const atLatest = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 2;
+    if (metadata.title) card.querySelector('.link-title').textContent = metadata.title;
+    if (metadata.description) {
+      const description = document.createElement('span');
+      description.className = 'link-description';
+      description.textContent = metadata.description;
+      card.querySelector('.link-domain').before(description);
+    }
+    if (metadata.image && /^https?:\/\//i.test(metadata.image)) {
+      const image = document.createElement('img');
+      image.className = 'link-image';
+      image.alt = '';
+      image.referrerPolicy = 'no-referrer';
+      image.decoding = 'async';
+      // Reserve space before loading so the image cannot shift the transcript later.
+      image.onerror = () => {
+        const atLatest = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 2;
+        image.remove();
+        if (card.isConnected && atLatest) transcript.scrollTop = transcript.scrollHeight;
+      };
+      card.prepend(image);
+      image.src = metadata.image;
+    }
+    if (card.isConnected && atLatest) transcript.scrollTop = transcript.scrollHeight;
+  } catch {} // The domain/path card remains useful when previews are unavailable.
+}
 function appendMessage(fragment, chat, message, extraClass = '') {
   const cached = messageElements.get(message);
   if (cached) {
@@ -201,9 +262,36 @@ function appendMessage(fragment, chat, message, extraClass = '') {
   const article = document.createElement('article');
   article.className = `message${sender === 'You' ? ' me' : ''}${extraClass}`;
   if (text) {
+    const links = messageLinks(text);
     const body = document.createElement('p');
-    body.textContent = text;
-    article.append(body);
+    let offset = 0;
+    for (const { index, label, url } of links) {
+      body.append(text.slice(offset, index));
+      const link = externalLink(url.href);
+      link.textContent = label;
+      body.append(link);
+      offset = index + label.length;
+    }
+    body.append(text.slice(offset));
+    if (links.length !== 1 || text.trim() !== links[0].label) article.append(body);
+    // One preview per message keeps multi-link messages compact; every URL remains clickable.
+    if (links.length) {
+      const { url } = links[0];
+      const card = externalLink(url.href);
+      card.className = 'link-card';
+      card.title = url.href;
+      const caption = document.createElement('span');
+      caption.className = 'link-caption';
+      const title = document.createElement('span');
+      title.className = 'link-title';
+      title.textContent = url.pathname === '/' ? url.hostname : url.pathname.slice(1) + url.search;
+      const domain = document.createElement('span');
+      domain.className = 'link-domain';
+      domain.textContent = url.hostname;
+      caption.append(title, domain);
+      card.append(caption);
+      article.append(card);
+    }
   }
   const attachments = visibleAttachments(message[3] || {});
   if (attachments.length) {
@@ -261,6 +349,7 @@ function appendMessage(fragment, chat, message, extraClass = '') {
 function renderMessages(chat, query = $('search').value.trim().toLowerCase()) {
   if (conversations[selected] !== chat) return;
   mediaObserver.disconnect();
+  linkObserver.disconnect();
   for (const item of mediaQueue) item.image.removeAttribute('src');
   mediaQueue.length = 0;
   if (!chat.messages) {
@@ -305,6 +394,9 @@ function renderMessages(chat, query = $('search').value.trim().toLowerCase()) {
     fragment.append(empty);
   }
   $('messages').replaceChildren(fragment);
+  for (const card of $('messages').querySelectorAll('.link-card')) {
+    if (!card.previewLoaded) linkObserver.observe(card);
+  }
   for (const frame of $('messages').querySelectorAll('.attachment-frame')) {
     if (!frame.mediaItem.image.hasAttribute('src')) mediaObserver.observe(frame);
   }
@@ -436,9 +528,12 @@ let swipe, suppressMediaClick = false;
 $('transcript').onpointerdown = event => {
   if (mobile.matches && event.pointerType === 'touch' && event.isPrimary) {
     swipe = { x: event.clientX, y: event.clientY };
-    $('transcript').setPointerCapture(event.pointerId);
+    if (!event.target.closest('a')) $('transcript').setPointerCapture(event.pointerId);
   }
 };
+$('transcript').addEventListener('click', event => {
+  if (suppressMediaClick && event.target.closest('a')) event.preventDefault();
+}, true);
 $('transcript').onpointerup = event => {
   if (swipe) {
     const dx = event.clientX - swipe.x, dy = event.clientY - swipe.y;

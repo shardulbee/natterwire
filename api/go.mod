@@ -6,6 +6,7 @@ require (
 	github.com/gen2brain/heic v0.7.1
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
 	golang.org/x/image v0.45.0
+	golang.org/x/net v0.58.0
 	howett.net/plist v1.0.1
 	modernc.org/sqlite v1.38.2
 )

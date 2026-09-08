@@ -28,7 +28,7 @@ func webHandler(api http.Handler) http.Handler {
 		panic(err)
 	}
 	mux := http.NewServeMux()
-	for _, pattern := range []string{"/attachments/", "/chats", "/chats/", "/messages/", "/send-session"} {
+	for _, pattern := range []string{"/attachments/", "/chats", "/chats/", "/messages/", "/send-session", "/link-preview"} {
 		mux.Handle(pattern, api)
 	}
 	mux.Handle("/", http.FileServer(http.FS(assets)))
@@ -183,7 +183,7 @@ func main() {
 		}
 		defer d.db.Close()
 		d.nativeName = lookup
-		return serve(ctx, fmt.Sprintf("127.0.0.1:%d", *port), webHandler(newSendAPI(d, sendText)), ready)
+		return serve(ctx, fmt.Sprintf("127.0.0.1:%d", *port), webHandler(newLinkPreviewAPI(newSendAPI(d, sendText))), ready)
 	}
 	if flag.NFlag() == 0 && nativeApplication(run) {
 		return

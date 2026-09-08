@@ -55,6 +55,17 @@ h1 { min-width:0; flex:1; margin:0; font-size:14px; font-weight:600; letter-spac
 .message.grouped .message-head { display:none; }
 .message p { margin:0; padding:7px 10px; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.45; background:var(--well); border-radius:9px 9px 9px 3px; }
 .message.me p { color:var(--bubble-fg); background:var(--bubble); border-radius:9px 9px 3px 9px; }
+.message p a { color:inherit; text-decoration:underline; text-underline-offset:2px; }
+.message a:focus-visible { outline:2px solid currentColor; outline-offset:2px; }
+.link-card { display:block; width:320px; max-width:100%; overflow:hidden; color:var(--fg); background:var(--well); border:1px solid var(--line); border-radius:12px; text-decoration:none; }
+.message p + .link-card,.link-card + .attachments { margin-top:3px; }
+.link-image { display:block; width:100%; aspect-ratio:16/10; object-fit:cover; background:var(--side); }
+.link-caption { display:grid; gap:5px; padding:11px 12px; overflow-wrap:anywhere; }
+.link-title { font-weight:600; line-height:1.35; }
+.link-title,.link-description { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden; }
+.link-description { font-size:13px; line-height:1.4; }
+.link-domain { color:var(--muted); font-size:12px; line-height:1.3; }
+@media (hover:hover) { .link-card:hover { border-color:var(--muted); } }
 .message-head { display:flex; align-items:baseline; gap:8px; padding:2px 3px 0; color:var(--muted); }
 .message.me .message-head { justify-content:flex-end; }
 .message-head strong,.message-head time { font-size:11px; font-weight:500; }

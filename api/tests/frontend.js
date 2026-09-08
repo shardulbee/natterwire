@@ -141,6 +141,36 @@
   renderMessages(groupedChat);
   assert(!$('messages').querySelector('.message').classList.contains('grouped'), 'Cached group end must reset after removal');
 
+  // Link detection preserves text and punctuation, never interpreting message HTML.
+  const linkText = 'See (https://example.com/a_(b)), www.example.org/path?q=1&x=2.\n<script>alert(1)</script>';
+  assert(messageLinks(linkText).map(link => link.label).join('|') === 'https://example.com/a_(b)|www.example.org/path?q=1&x=2', 'URL punctuation or www detection failed');
+  assert(messageLinks('javascript:alert(1) ftp://host/a https://user:pass@host/a user@www.example.com').length === 0, 'Unsafe or non-URL text became links');
+  const linkChat = conversations[4];
+  linkChat.messages = [[linkChat.name, '12:30', linkText], ['You', '12:31', 'https://example.com/product']].map(message => [...message, { sentAt: '2026-09-08T12:30:00Z' }]);
+  select(4);
+  linkObserver.disconnect();
+  const linkedBody = $('messages').querySelector('p');
+  assert(linkedBody.textContent === linkText && !linkedBody.querySelector('script'), 'Linkification changed or interpreted message text');
+  assert(linkedBody.querySelectorAll('a').length === 2, 'Every inline URL must be clickable');
+  const cards = [...$('messages').querySelectorAll('.link-card')];
+  assert(cards.length === 2 && !cards[1].parentNode.querySelector('p'), 'URL-only messages must show one card without duplicate text');
+  assert([...$('messages').querySelectorAll('a')].every(a => a.target === '_blank' && a.rel.includes('noreferrer')), 'Links must preserve the app and omit referrers');
+  request = async () => ({ title: '<b>Preview title</b>', description: 'Page description', image: `${location.origin}/favicon.png` });
+  try {
+    await loadLinkPreview(cards[0]);
+    assert(cards[0].querySelector('.link-title').textContent === '<b>Preview title</b>' && !cards[0].querySelector('b'), 'Metadata must stay plain text');
+    assert(cards[0].querySelector('img').referrerPolicy === 'no-referrer', 'Preview image must omit referrer');
+    cards[0].querySelector('img').dispatchEvent(new Event('error'));
+    assert(!cards[0].querySelector('img'), 'Broken preview image must disappear');
+    request = async () => { throw new Error('Preview unavailable'); };
+    await loadLinkPreview(cards[1]);
+    assert(cards[1].querySelector('.link-domain').textContent === 'example.com', 'Failed preview must retain clickable domain card');
+    select(0);
+    select(4);
+    assert($('messages').querySelector('.link-card') === cards[0], 'Preview DOM must survive chat switches');
+  } finally { request = originalRequest; }
+  select(3);
+
   // No real send requests; keep the mock until the delayed metadata refresh finishes.
   let accept;
   request = async (path, options) => options?.method === 'POST'
