@@ -1,0 +1,135 @@
+// Run in a fixture browser page with: agent-browser eval "$(cat api/tests/frontend.js)"
+// Replaces in-memory conversations only. Does not send messages. Reload afterward.
+(async () => {
+  const assert = (condition, message) => { if (!condition) throw new Error(message); };
+  const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+  conversations = Array.from({ length: 40 }, (_, i) => ({
+    id: `fixture-${i}`, name: `Test conversation ${i + 1}`, preview: 'Performance fixture', time: 'Today',
+    messages: Array.from({ length: 100 }, (_, j) => [
+      j % 2 ? 'You' : `Test conversation ${i + 1}`, '12:30',
+      `Message ${j + 1}: Testing switching, scrolling and draft input with a full conversation.`,
+      { id: String(j), sentAt: '2026-09-08T12:30:00Z' },
+    ]),
+  }));
+  buildChats();
+  select(0);
+  const first = $('messages').querySelector('.message');
+  const samples = [];
+  for (let i = 0; i < 60; i++) {
+    const start = performance.now();
+    select(i % 2);
+    void $('transcript').scrollHeight;
+    samples.push(performance.now() - start);
+  }
+  select(0);
+  assert($('messages').querySelector('.message') === first, 'Reopening must reuse message DOM');
+  assert(getComputedStyle(first).animationName === 'none', 'History must not replay entrance animations');
+  assert(document.querySelectorAll('[aria-current="true"]').length === 1, 'Exactly one selected chat');
+  $('draft').value = 'Draft survives switching';
+  $('draft').dispatchEvent(new Event('input'));
+  select(1);
+  select(0);
+  assert($('draft').value === 'Draft survives switching', 'Draft lost');
+  await frame();
+  $('transcript').scrollTop = 0;
+  $('draft').dispatchEvent(new Event('input'));
+  await frame();
+  assert($('transcript').scrollTop === 0, 'Typing must not move a scrolled transcript');
+  openSearch();
+  $('search').value = 'conversation 2';
+  filterChats();
+  assert(visible.length === 11, 'Search results changed');
+  const searchMutations = new MutationObserver(() => {});
+  searchMutations.observe($('chats'), { attributes: true, childList: true, subtree: true, characterData: true });
+  filterChats();
+  assert(searchMutations.takeRecords().length === 0, 'Repeated search must not rewrite unchanged rows');
+  searchMutations.disconnect();
+  closeSearch();
+  select(1);
+  renderMessages(conversations[0]);
+  assert($('messages').querySelector('.message') !== first, 'Background chat must not replace active transcript');
+
+  // A loaded attachment keeps its image node and source across chat switches.
+  conversations[0].messages.push(['You', '12:30', '', {
+    sentAt: '2026-09-08T12:30:00Z', attachments: [
+      { mediaID: 'fixture', version: '1', width: 64, height: 64, mimeType: 'image/png', filename: 'Fixture image' },
+    ],
+  }]);
+  select(0);
+  const imageFrame = $('messages').querySelector('.attachment-frame');
+  mediaObserver.unobserve(imageFrame);
+  imageFrame.mediaItem.url = 'favicon.png?fixture=1';
+  mediaQueue.push(imageFrame.mediaItem);
+  loadQueuedMedia();
+  for (let i = 0; i < 120 && imageFrame.disabled; i++) await frame();
+  assert(!imageFrame.disabled, 'Fixture image failed to load');
+  const image = imageFrame.firstElementChild;
+  const source = image.src;
+  select(1);
+  select(0);
+  assert($('messages').querySelector('.attachment-image') === image && image.src === source, 'Image must survive reopening');
+  imageFrame.click();
+  assert($('lightbox').open, 'Cached image lightbox must open');
+  $('lightbox').close();
+  await frame();
+  await frame();
+  assert(image.parentNode === imageFrame, 'Lightbox must return the cached image');
+
+  // New page tuples invalidate old DOM without keeping stale text.
+  conversations[0].messages = [['You', '12:30', 'Updated message', { sentAt: '2026-09-08T12:30:00Z' }]];
+  renderMessages(conversations[0]);
+  assert($('messages').querySelectorAll('.message').length === 1 && $('messages').textContent.includes('Updated message'), 'Refresh must replace old content');
+
+  // Hold a metadata response while repeated refreshes and scrolling happen.
+  const originalRequest = request;
+  let release, calls = 0, fail = false;
+  let gate = new Promise(resolve => { release = resolve; });
+  const page = { items: Array.from({ length: 100 }, (_, i) => ({
+    id: String(100 - i), text: `Refresh fixture message ${100 - i}`, sender: 'Test conversation 3',
+    sentAt: `2026-09-08T12:${String(59 - Math.floor(i / 2)).padStart(2, '0')}:00Z`, attachments: [],
+  })) };
+  request = async () => { calls++; await gate; if (fail) throw new Error('Fixture failure'); return structuredClone(page); };
+  try {
+    select(2);
+    const chat = conversations[2];
+    const pending = loadMessages(chat, true);
+    for (let i = 0; i < 9; i++) assert(loadMessages(chat, true) === pending, 'Concurrent refreshes must share a promise');
+    assert(calls === 1, 'Ten concurrent refreshes must issue one request');
+    release();
+    await pending;
+    await frame();
+    const before = [...$('messages').querySelectorAll('.message')];
+    let mutationCount = 0;
+    const mutations = new MutationObserver(records => { mutationCount += records.length; });
+    mutations.observe($('messages'), { childList: true, subtree: true, characterData: true });
+    await loadMessages(chat, true);
+    assert(mutationCount + mutations.takeRecords().length === 0, 'Unchanged refresh must not mutate transcript DOM');
+    mutations.disconnect();
+    assert($('messages').querySelector('.message') === before[0], 'Unchanged page must preserve message elements');
+
+    gate = new Promise(resolve => { release = resolve; });
+    const refresh = loadMessages(chat, true);
+    $('transcript').scrollTop = 150;
+    page.items[0].text = 'Edited newest message';
+    release();
+    await refresh;
+    assert(Math.abs($('transcript').scrollTop - 150) < 2, 'Refresh must preserve scrolling done during the request');
+    assert($('messages').querySelector('.message') === before[0], 'Editing one message must reuse unchanged siblings');
+    assert($('messages').textContent.includes('Edited newest message'), 'Edited message not rendered');
+    fail = true;
+    await loadMessages(chat, true).then(() => { throw new Error('Expected fixture failure'); }, () => {});
+    assert(!chat.loading, 'Failure must release the in-flight request');
+    fail = false;
+    await loadMessages(chat, true);
+  } finally { request = originalRequest; }
+
+  $('draft').value = 'Multiple lines\n'.repeat(12);
+  updateComposer();
+  assert($('draft').style.height === '120px' && $('draft').style.overflowY === 'auto', 'Long drafts must cap height and scroll');
+  $('draft').value = '';
+  updateComposer();
+  assert($('draft').style.height === '40px' && $('draft').style.overflowY === 'hidden', 'Empty draft must shrink');
+  select(1);
+  samples.sort((a, b) => a - b);
+  return { result: 'PASS', switches: samples.length, medianMs: samples[30], p95Ms: samples[57], maxMs: samples[59] };
+})()

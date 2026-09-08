@@ -9,24 +9,35 @@ let selected = -1;
 let sendSession = '';
 const mediaQueue = [];
 let mediaLoading = 0;
+const timeFormatter = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' });
+const weekdayFormatter = new Intl.DateTimeFormat([], { weekday: 'short' });
+const dayFormatter = new Intl.DateTimeFormat([], { month: 'long', day: 'numeric' });
+// Message tuples live with the chat cache; discarded pages release their DOM too.
+const messageElements = new WeakMap();
+const searchableMessages = new WeakMap();
 
 function loadQueuedMedia() {
   while (mediaLoading < 2 && mediaQueue.length) {
     const item = mediaQueue.shift();
-    if (!item.frame.isConnected) continue;
+    if (!item.frame.isConnected) {
+      item.image.removeAttribute('src');
+      continue;
+    }
     mediaLoading++;
     const done = loaded => {
       mediaLoading--;
       if (loaded) {
         item.frame.disabled = false;
         item.frame.onclick = () => { if (!suppressMediaClick) openImage(item.image); };
-      } else if (item.tries++ < 3 && item.frame.isConnected) {
+      } else if (!item.frame.isConnected && item.tries < 3) {
+        item.image.removeAttribute('src');
+      } else if (item.tries++ < 3) {
         setTimeout(() => { mediaQueue.push(item); loadQueuedMedia(); }, item.tries * 400);
-      } else if (item.frame.isConnected) {
+      } else {
         if (item.pluginPayload) {
           const article = item.frame.closest('.message');
           item.frame.remove();
-          if (!article.querySelector('p, .attachment-frame, .attachment-file')) article.remove();
+          if (!article.querySelector('p, .attachment-frame, .attachment-file')) article.hidden = true;
         } else {
           const fallback = document.createElement('span');
           fallback.className = 'attachment-file';
@@ -58,15 +69,15 @@ function openImage(image) {
 function formatTime(value) {
   if (!value) return '';
   const date = new Date(value), now = new Date();
-  if (date.toDateString() === now.toDateString()) return new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' }).format(date);
+  if (date.toDateString() === now.toDateString()) return timeFormatter.format(date);
   const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
   if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
-  return new Intl.DateTimeFormat([], { weekday: 'short' }).format(date);
+  return weekdayFormatter.format(date);
 }
 function dayLabel(value) {
   const date = new Date(value), now = new Date();
   if (date.toDateString() === now.toDateString()) return 'Today';
-  return new Intl.DateTimeFormat([], { month: 'long', day: 'numeric' }).format(date);
+  return dayFormatter.format(date);
 }
 function messageTuple(message, chat) {
   const text = (message.text || '').replaceAll('\ufffc', '').trim();
@@ -144,15 +155,25 @@ async function loadChats() {
     $('count').textContent = error.message;
   }
 }
-async function loadMessages(chat, refresh = false) {
-  if (chat.messages && !refresh) return;
-  const transcript = $('transcript');
-  const preserveScroll = refresh && conversations[selected] === chat && transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight > 2;
-  const bottomOffset = transcript.scrollHeight - transcript.scrollTop;
+function loadMessages(chat, refresh = false) {
+  if (chat.loading) return chat.loading;
+  if (chat.messages && !refresh) return Promise.resolve();
+  chat.loading = fetchMessages(chat, refresh).finally(() => { chat.loading = null; });
+  return chat.loading;
+}
+async function fetchMessages(chat, refresh) {
   chat.previewLoaded = true;
   const page = await request(`chats/${encodeURIComponent(chat.id)}/messages?limit=100&media=metadata`);
+  const transcript = $('transcript');
+  // Use the position at response time, not where the reader was when the request started.
+  const preserveScroll = refresh && conversations[selected] === chat && transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight > 2;
+  const bottomOffset = transcript.scrollHeight - transcript.scrollTop;
   const accepted = chat.messages?.filter(message => message[3]?.localAccepted) || [];
-  const messages = page.items.slice().reverse().map(message => messageTuple(message, chat));
+  const previous = new Map(chat.messages?.map(message => [message[3]?.id, message]));
+  const messages = page.items.slice().reverse().map(message => {
+    const tuple = messageTuple(message, chat), cached = previous.get(message.id);
+    return cached && JSON.stringify(cached) === JSON.stringify(tuple) ? cached : tuple;
+  });
   const matched = new Set();
   for (const local of accepted) {
     const sentAt = new Date(local[3].sentAt).getTime();
@@ -160,15 +181,22 @@ async function loadMessages(chat, refresh = false) {
     if (match) matched.add(match[3].id);
     else messages.push(local);
   }
-  chat.messages = messages.sort((a, b) => new Date(a[3]?.sentAt) - new Date(b[3]?.sentAt));
+  messages.sort((a, b) => new Date(a[3]?.sentAt) - new Date(b[3]?.sentAt));
+  const changed = messages.length !== chat.messages?.length || messages.some((message, index) => message !== chat.messages[index]);
+  chat.messages = messages;
   if (page.items[0]) chat.preview = previewText(page.items[0], chat);
   updateChat(conversations.indexOf(chat));
-  if (conversations[selected] === chat) {
+  if (conversations[selected] === chat && changed) {
     renderMessages(chat);
     if (preserveScroll) transcript.scrollTop = transcript.scrollHeight - bottomOffset;
   }
 }
 function appendMessage(fragment, chat, message, extraClass = '') {
+  const cached = messageElements.get(message);
+  if (cached) {
+    fragment.append(cached);
+    return cached;
+  }
   const [sender, time, text] = message;
   const article = document.createElement('article');
   article.className = `message${sender === 'You' ? ' me' : ''}${extraClass}`;
@@ -210,7 +238,6 @@ function appendMessage(fragment, chat, message, extraClass = '') {
         }
         frame.append(image);
         frame.mediaItem = { frame, image, filename:attachment.filename, pluginPayload:attachment.filename?.toLowerCase().endsWith('.pluginpayloadattachment'), url:`attachments/${encodeURIComponent(attachment.mediaID)}?version=${encodeURIComponent(attachment.version)}`, tries:0 };
-        mediaObserver.observe(frame);
         media.append(frame);
       } else media.append(fallback());
     }
@@ -228,9 +255,14 @@ function appendMessage(fragment, chat, message, extraClass = '') {
   head.append(timestamp);
   article.append(head);
   fragment.append(article);
+  messageElements.set(message, article);
   return article;
 }
 function renderMessages(chat, query = $('search').value.trim().toLowerCase()) {
+  if (conversations[selected] !== chat) return;
+  mediaObserver.disconnect();
+  for (const item of mediaQueue) item.image.removeAttribute('src');
+  mediaQueue.length = 0;
   if (!chat.messages) {
     const loading = document.createElement('div');
     loading.className = 'date';
@@ -266,6 +298,9 @@ function renderMessages(chat, query = $('search').value.trim().toLowerCase()) {
     fragment.append(empty);
   }
   $('messages').replaceChildren(fragment);
+  for (const frame of $('messages').querySelectorAll('.attachment-frame')) {
+    if (!frame.mediaItem.image.hasAttribute('src')) mediaObserver.observe(frame);
+  }
   $('transcript').scrollTop = $('transcript').scrollHeight;
   if (match) $('transcript').scrollTop += match.getBoundingClientRect().top - $('transcript').getBoundingClientRect().top - 12;
 }
@@ -276,8 +311,9 @@ function updateComposer() {
   const sending = chat && attempts.get(chat.id)?.state === 'sending';
   const atLatest = $('transcript').scrollHeight - $('transcript').scrollTop - $('transcript').clientHeight < 2;
   draft.style.height = '40px';
-  draft.style.height = `${Math.max(40, Math.min(120, draft.scrollHeight))}px`;
-  draft.style.overflowY = draft.scrollHeight > 120 ? 'auto' : 'hidden';
+  const height = draft.scrollHeight;
+  draft.style.height = `${Math.max(40, Math.min(120, height))}px`;
+  draft.style.overflowY = height > 120 ? 'auto' : 'hidden';
   $('send').disabled = !!sending || !draft.value.trim();
   if (atLatest) requestAnimationFrame(() => $('transcript').scrollTop = $('transcript').scrollHeight);
 }
@@ -453,12 +489,17 @@ $('search').oninput = filterChats;
 function filterChats() {
   visible = [];
   const query = $('search').value.trim().toLowerCase();
-  for (const button of $('chats').children) {
-    const index = buttons.indexOf(button), chat = conversations[index];
-    const message = query && chat.messages?.find(([, , text]) => text.toLowerCase().includes(query));
+  for (const [index, button] of buttons.entries()) {
+    const chat = conversations[index];
+    const message = query && chat.messages?.find(message => {
+      if (!searchableMessages.has(message)) searchableMessages.set(message, message[2].toLowerCase());
+      return searchableMessages.get(message).includes(query);
+    });
     const match = chat.name.toLowerCase().includes(query) || chat.preview.toLowerCase().includes(query) || !!message;
-    button.hidden = !match;
-    button.querySelector('.preview').textContent = message ? message[2].slice(Math.max(0, message[2].toLowerCase().indexOf(query) - 24)) : chat.preview || 'No message preview';
+    if (button.hidden === match) button.hidden = !match;
+    const preview = button.querySelector('.preview');
+    const text = message ? message[2].slice(Math.max(0, searchableMessages.get(message).indexOf(query) - 24)) : chat.preview || 'No message preview';
+    if (preview.textContent !== text) preview.textContent = text;
     if (match) visible.push(index);
   }
   $('count').hidden = visible.length > 0;
