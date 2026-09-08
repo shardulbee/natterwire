@@ -40,6 +40,13 @@ func TestMetadataBinaryMedia(t *testing.T) {
 		if w.Code != status {
 			t.Fatalf("%s: %d %s", target, w.Code, w.Body.String())
 		}
+		wantCache := "no-store"
+		if status == 200 && w.Header().Get("Content-Type") == "image/png" {
+			wantCache = "private, max-age=31536000, immutable"
+		}
+		if got := w.Header().Get("Cache-Control"); got != wantCache {
+			t.Fatalf("%s: Cache-Control = %q, want %q", target, got, wantCache)
+		}
 		return w
 	}
 	mediaURL := "/attachments/" + *a.MediaID + "?version=" + *a.Version

@@ -96,6 +96,8 @@ func (d *database) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", media.contentType)
+		// File versions are part of the URL; only successful images are cacheable.
+		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 		w.WriteHeader(200)
 		_, _ = w.Write(media.body)
 		return
