@@ -4,7 +4,7 @@ Browser client embedded in the [API](../README.md). Chats and drafts stay in mem
 
 Link previews contact linked sites from the API host; images load directly in the browser without a referrer. Private-network targets are blocked. See [preview handling](../link_preview.go).
 
-Install from the browser's app menu at the Mac's HTTPS Tailscale URL, or Safari → Share → Add to Home Screen on iOS. Plain HTTP tailnet IPs do not support installation. The API must remain online.
+For remote PWA installation, configure HTTPS access to the Mac yourself, then install from the browser's app menu, or Safari → Share → Add to Home Screen on iOS. Plain HTTP remote addresses do not support installation. The API must remain online. See [access setup](../README.md#macos-setup).
 
 The visible app refreshes every 30 seconds and on focus, return, or reconnection, preserving drafts, search, and reading position. Hidden apps do not poll.
 

@@ -14,7 +14,7 @@ The Mac cannot detect or send new messages while asleep or offline. On return it
 
 ## HTTP contract
 
-Same trust boundary as sends: local processes and devices allowed by the Mac's Tailscale policy. Do not expose the API publicly.
+Same trust boundary as sends: local processes and devices granted access through your network setup. The API has no authentication. Do not expose it publicly.
 
 - `GET /push` returns only `{ "publicKey": "..." }`. No endpoints or private key.
 - `POST /push` accepts browser subscription JSON with `endpoint` and `keys.auth`/`keys.p256dh`. It validates vendor, key lengths/curve and an 8 KiB body limit, then upserts without resetting an existing cursor.

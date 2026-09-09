@@ -14,12 +14,13 @@ permissions:
 
 jobs:
   deploy:
-    if: github.repository == 'shardulbee/natterwire' && github.event.repository.private && github.ref == 'refs/heads/main'
+    if: github.repository == 'shardulbee/natterwire' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, macOS, ARM64, natterwire-turbogadget]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@v5

@@ -1,6 +1,6 @@
 # Natterwire API
 
-Loopback-only Go service on port 8741, with an [embedded browser client](web/README.md). Reads Messages through read-only SQLite; sends through Messages.app on macOS. No authentication: restrict Tailscale access to trusted devices and never expose it publicly.
+Loopback-only Go service on port 8741, with an [embedded browser client](web/README.md). Reads Messages through read-only SQLite; sends through Messages.app on macOS. No authentication: restrict access to trusted devices and never expose it publicly.
 
 ## macOS setup
 
@@ -10,7 +10,9 @@ The app starts without a window. Use the menu-bar fox → Open Natterwire for st
 
 Grant the installed app Full Disk Access for Messages, Contacts access for names, and Automation access for sending through Messages. Messages access retries automatically after permission changes. Updates may require re-adding the app to Full Disk Access. Do not grant access to a shell or disable TCC.
 
-For remote/browser access, run `tailscale serve --bg 8741` and use its HTTPS URL. Quit before running `scripts/uninstall.sh`; unrecognized pre-Go app backups are retained. Installation details live in [install.sh](../scripts/install.sh) and [build-app](../scripts/build-app).
+Remote access and HTTPS are user-managed. For example, if you already use Tailscale, restrict access with your tailnet policy, then run `tailscale serve --bg 8741` and use the HTTPS URL it provides. Natterwire does not install or configure Tailscale.
+
+Quit before running `scripts/uninstall.sh`; unrecognized pre-Go app backups are retained. Installation details live in [install.sh](../scripts/install.sh) and [build-app](../scripts/build-app).
 
 ## Linux fixture workflow
 

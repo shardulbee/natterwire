@@ -12,8 +12,8 @@ Build and install on the Mac with Go 1.25+ and Xcode command-line tools:
 scripts/install.sh
 ```
 
-Open Natterwire on the Mac, then use its HTTPS Tailscale URL in your browser or run `natterwire-tui`. Install the PWA from the browser's app menu, or Safari → Share → Add to Home Screen on iOS. The Mac backend must stay online.
+Open Natterwire on the Mac, then visit `http://127.0.0.1:8741` on that Mac or run `natterwire-tui`. The Mac backend must stay online.
 
-Use Tailscale for remote access. The API has no authentication; allow only trusted devices, never public access.
+Remote access is yours to configure; Natterwire does not set up networking or HTTPS. The API has no authentication, so restrict access to trusted devices and never expose it publicly. Installing the browser client as a PWA remotely requires HTTPS. See [API setup](api/README.md) for an optional Tailscale example.
 
 [API setup](api/README.md) · [Browser/PWA](api/web/README.md) · [TUI usage](tui/README.md) · [Checks](AGENTS.md)
