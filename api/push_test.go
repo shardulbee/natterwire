@@ -65,6 +65,19 @@ func TestUnreadSource(t *testing.T) {
 		if got := page.Items[0].UnreadCount; got == nil || *got != check.count {
 			t.Fatalf("unread = %v; want %d", got, check.count)
 		}
+		if got := page.Items[0].LatestIncomingRowID; got != "14" {
+			t.Fatalf("latest incoming row = %s; want 14 regardless of Mac read flags", got)
+		}
+	}
+	if _, err := w.Exec("UPDATE message SET is_from_me=1 WHERE ROWID=14"); err != nil {
+		t.Fatal(err)
+	}
+	if got := get[Chat](t, d, "/chats?sort=latest").Items[0].LatestIncomingRowID; got != "9" {
+		t.Fatalf("outgoing row must not advance incoming cursor: %s", got)
+	}
+	message := get[Message](t, d, "/chats/"+opaque("iMessage;-;alex@example.invalid")+"/messages").Items[0]
+	if message.RowID != "14" || message.ID != "attachment-only" {
+		t.Fatalf("message cursor must preserve GUID identity: %+v", message)
 	}
 	if _, err := d.db.Exec("UPDATE message SET is_read=1"); err == nil {
 		t.Fatal("Messages connection allowed a write")

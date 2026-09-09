@@ -78,10 +78,10 @@
     await openNotificationChat(target.id);
     assert(conversations[selected] === target && drafts.get(active.id) === 'Retain notification draft', 'Notification navigation lost chat or draft');
     const unknown = 'fixture-notification-chat';
-    request = async path => path.startsWith('chats?') ? { items: [{ id: unknown, displayName: 'Older notification', unreadCount: 1 }], nextBefore: null } : { items: [] };
+    request = async path => path.startsWith('chats?') ? { items: [{ id: unknown, displayName: 'Older notification', unreadCount: 1, latestIncomingRowID: '500' }], nextBefore: null } : { items: [] };
     await openNotificationChat(unknown);
     assert(conversations[selected].id === unknown, 'Notification must find a conversation outside the initial list');
-    assert(buttons[selected].getAttribute('aria-label') === 'Older notification, unread in Mac Messages', 'Notification must not mark iMessage read or announce a count');
+    assert(buttons[selected].getAttribute('aria-label') === 'Older notification, unread in Natterwire', 'Notification must not acknowledge messages that have not loaded');
     await openNotificationChat('https://evil.invalid/');
     assert(conversations[selected].id === unknown, 'Invalid notification data must not navigate');
     return { result: 'PASS', checks: 'first-launch prompt, remembered dismissal, immediate gesture, permission refusal, existing permission, persistence retry, chat navigation, unread state' };

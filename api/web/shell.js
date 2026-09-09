@@ -102,14 +102,41 @@ async function request(path, options) {
   if (!response.ok) throw new Error(body.error || `Request failed (${response.status})`);
   return body;
 }
+// Browser-local cursors assume the same growing Messages database, like push polling.
+const readThrough = new Map();
+function readCursor(chat) {
+  if (!readThrough.has(chat.id)) {
+    let saved;
+    try { saved = localStorage.getItem(`read-through:${chat.id}`); } catch {}
+    const initial = saved && /^\d+$/.test(saved) ? saved : chat.unreadCount > 0 ? '0' : chat.latestIncomingRowID || '0';
+    readThrough.set(chat.id, BigInt(initial));
+    try { localStorage.setItem(`read-through:${chat.id}`, initial); } catch {}
+  }
+  return readThrough.get(chat.id);
+}
+function acknowledgeChat() {
+  const chat = conversations[selected], transcript = $('transcript');
+  if (!chat || document.hidden || !document.hasFocus() || (mobile.matches && !document.body.classList.contains('chat-open')) ||
+      transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight > 2) return;
+  let cursor = readCursor(chat);
+  for (const message of chat.messages || []) {
+    const row = BigInt(message[3]?.rowID || '0');
+    if (row > cursor) cursor = row;
+  }
+  if (cursor === readCursor(chat)) return;
+  readThrough.set(chat.id, cursor);
+  try { localStorage.setItem(`read-through:${chat.id}`, String(cursor)); } catch {}
+  updateChat(selected);
+}
+$('transcript').addEventListener('scroll', acknowledgeChat);
 function updateChat(index) {
   const button = buttons[index], chat = conversations[index];
   if (!button) return;
   button.querySelector('.preview').textContent = chat.preview || 'No message preview';
   button.querySelector('time').textContent = chat.time;
   const unread = button.querySelector('.unread');
-  unread.hidden = !(chat.unreadCount > 0);
-  button.setAttribute('aria-label', chat.name + (chat.unreadCount > 0 ? ', unread in Mac Messages' : ''));
+  unread.hidden = BigInt(chat.latestIncomingRowID || '0') <= readCursor(chat);
+  button.setAttribute('aria-label', chat.name + (!unread.hidden ? ', unread in Natterwire' : ''));
 }
 async function loadPreview(index) {
   const chat = conversations[index];
@@ -132,7 +159,7 @@ function buildChats() {
     button.className = 'chat';
     button.setAttribute('aria-label', chat.name);
     button.title = chat.name;
-    button.innerHTML = '<span class="unread" title="Unread in Mac Messages" aria-hidden="true" hidden></span><span class="chat-summary"><span class="chat-top"><span class="chat-name"></span><time></time></span><span class="preview"></span></span>';
+    button.innerHTML = '<span class="unread" title="Unread in Natterwire" aria-hidden="true" hidden></span><span class="chat-summary"><span class="chat-top"><span class="chat-name"></span><time></time></span><span class="preview"></span></span>';
     button.querySelector('.chat-name').textContent = chat.name;
     button.onclick = () => openChat(conversations.indexOf(chat));
     $('chats').append(button);
@@ -156,7 +183,7 @@ async function loadChats() {
   $('count').textContent = 'Loading conversations…';
   try {
     const page = await request('chats?limit=100&sort=latest');
-    conversations = page.items.map(chat => ({ id: chat.id, name: chat.displayName, unreadCount: chat.unreadCount, preview: '', time: formatTime(chat.lastMessageAt), lastMessageAt: chat.lastMessageAt, messages: null }));
+    conversations = page.items.map(chat => ({ id: chat.id, name: chat.displayName, unreadCount: chat.unreadCount, latestIncomingRowID: chat.latestIncomingRowID, preview: '', time: formatTime(chat.lastMessageAt), lastMessageAt: chat.lastMessageAt, messages: null }));
     buildChats();
     $('count').hidden = conversations.length > 0;
     $('count').textContent = conversations.length ? '' : 'No conversations';
@@ -175,12 +202,12 @@ async function refreshApp() {
     const cached = new Map(conversations.map(chat => [chat.id, chat]));
     const next = page.items.map(item => {
       const chat = cached.get(item.id) || { id: item.id, preview: '', messages: null };
-      if (chat.lastMessageAt !== item.lastMessageAt) {
+      if (chat.lastMessageAt !== item.lastMessageAt || chat.latestIncomingRowID !== item.latestIncomingRowID) {
         chat.previewLoaded = false;
         // Inactive transcripts refresh when opened; previews need only the newest message.
         chat.stale = true;
       }
-      Object.assign(chat, { name: item.displayName, unreadCount: item.unreadCount, time: formatTime(item.lastMessageAt), lastMessageAt: item.lastMessageAt });
+      Object.assign(chat, { name: item.displayName, unreadCount: item.unreadCount, latestIncomingRowID: item.latestIncomingRowID, time: formatTime(item.lastMessageAt), lastMessageAt: item.lastMessageAt });
       return chat;
     });
     // Keep open conversations and pending sends even outside the newest 100.
@@ -248,6 +275,7 @@ async function fetchMessages(chat, refresh) {
     renderMessages(chat);
     if (preserveScroll) transcript.scrollTop = transcript.scrollHeight - bottomOffset;
   }
+  acknowledgeChat();
 }
 function messageLinks(text) {
   const links = [];
@@ -495,6 +523,7 @@ async function sendDraft() {
   $('transcript').focus({ preventScroll: true });
   updateComposer();
   renderMessages(chat);
+  acknowledgeChat();
   $('status').textContent = '';
   try {
     if (!attempt.key) {
@@ -549,6 +578,7 @@ function select(index, open = true) {
   $('status').textContent = '';
   if (!chat.messages || chat.stale) loadMessages(chat, true).catch(error => { if (conversations[selected] === chat) $('status').textContent = error.message; });
   if (open && mobile.matches) $('name').focus({ preventScroll: true });
+  acknowledgeChat();
 }
 function openChat(index) {
   if (!mobile.matches || document.body.classList.contains('chat-open')) return select(index);
@@ -557,6 +587,7 @@ function openChat(index) {
   history.pushState({ ...history.state, natterwireChat: true }, '');
   document.body.classList.add('chat-open');
   $('name').focus({ preventScroll: true });
+  acknowledgeChat();
 }
 function compose() { $('draft').focus(); }
 function showIndex() {
@@ -733,7 +764,7 @@ async function openNotificationChat(id) {
       const page = await request(`chats?limit=100&sort=latest${before ? `&before=${encodeURIComponent(before)}` : ''}`);
       const item = page.items.find(chat => chat.id === id);
       if (item) {
-        index = conversations.push({ id: item.id, name: item.displayName, unreadCount: item.unreadCount, preview: '', time: formatTime(item.lastMessageAt), messages: null }) - 1;
+        index = conversations.push({ id: item.id, name: item.displayName, unreadCount: item.unreadCount, latestIncomingRowID: item.latestIncomingRowID, preview: '', time: formatTime(item.lastMessageAt), messages: null }) - 1;
         buildChats();
         break;
       }

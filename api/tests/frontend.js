@@ -5,12 +5,14 @@
 (async () => {
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
   const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+  for (const key of Object.keys(localStorage)) if (key.startsWith('read-through:fixture-')) localStorage.removeItem(key);
+  readThrough.clear();
   conversations = Array.from({ length: 40 }, (_, i) => ({
-    id: `fixture-${i}`, name: `Test conversation ${i + 1}`, unreadCount: i % 3, preview: 'Performance fixture', time: 'Today',
+    id: `fixture-${i}`, name: `Test conversation ${i + 1}`, unreadCount: i % 3, latestIncomingRowID: '100', preview: 'Performance fixture', time: 'Today',
     messages: Array.from({ length: 100 }, (_, j) => [
       j % 2 ? 'You' : `Test conversation ${i + 1}`, '12:30',
       `Message ${j + 1}: Testing switching, scrolling and draft input with a full conversation.`,
-      { id: String(j), sentAt: '2026-09-08T12:30:00Z' },
+      { id: String(j), rowID: String(j + 1), sentAt: '2026-09-08T12:30:00Z' },
     ]),
   }));
   buildChats();
@@ -33,17 +35,18 @@
   select(0);
   assert($('draft').value === 'Draft survives switching', 'Draft lost');
   assert(buttons[0].querySelector('.unread').hidden, 'Read chat must not show an unread marker');
-  assert(buttons[1].getAttribute('aria-label') === 'Test conversation 2, unread in Mac Messages', 'Opening a chat must retain source unread state without announcing a count');
+  assert(buttons[1].getAttribute('aria-label') === 'Test conversation 2', 'Viewing latest messages must clear local unread state');
   const dot = buttons[1].querySelector('.unread');
   const summaryLeft = buttons[1].querySelector('.chat-summary').getBoundingClientRect().left;
-  for (const count of [1, 120, 0, null]) {
-    conversations[1].unreadCount = count;
+  for (const count of [1, 120, 0]) {
+    conversations[1].latestIncomingRowID = String(100 + count);
     updateChat(1);
     assert(dot.hidden === !(count > 0) && dot.textContent === '', 'Unread must be a binary dot, never a number');
     assert(buttons[1].querySelector('.chat-summary').getBoundingClientRect().left === summaryLeft, 'Unread changes must not shift conversation text');
     if (count > 0) assert(dot.getBoundingClientRect().width === 8 && dot.getBoundingClientRect().height === 8, 'Unread dot must retain its size for any count');
   }
   conversations[1].unreadCount = 1;
+  conversations[1].latestIncomingRowID = '100';
   updateChat(1);
   await frame();
   $('transcript').scrollTop = 0;
@@ -140,7 +143,7 @@
 
   // Automatic refresh preserves the reader, drafts and search while discovering chats.
   const active = conversations[selected];
-  const listed = conversations.map(chat => ({ id: chat.id, displayName: chat.name, unreadCount: chat.unreadCount, lastMessageAt: '2026-09-08T13:00:00Z' }));
+  const listed = conversations.map(chat => ({ id: chat.id, displayName: chat.name, unreadCount: chat.unreadCount, latestIncomingRowID: chat.latestIncomingRowID, lastMessageAt: '2026-09-08T13:00:00Z' }));
   listed.unshift({ id: 'new-chat', displayName: 'New arrival', lastMessageAt: '2026-09-08T14:00:00Z' });
   let polls = 0, rejectPoll = false;
   request = async path => {
@@ -167,7 +170,7 @@
     listed.find(chat => chat.id === active.id).unreadCount = 0;
     await refreshApp();
     assert($('search').value === 'New arrival' && visible.length === 1, 'Polling must preserve search');
-    assert(buttons[selected].querySelector('.unread').hidden, 'Read changes in Messages must clear the marker on refresh');
+    assert(buttons[selected].querySelector('.unread').hidden, 'Polling must preserve the local read marker');
     closeSearch();
     Object.defineProperty(document, 'hidden', { configurable: true, value: true });
     const beforeHidden = polls;

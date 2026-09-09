@@ -19,15 +19,17 @@ import (
 )
 
 type Chat struct {
-	ID            string  `json:"id"`
-	DisplayName   string  `json:"displayName"`
-	Service       *string `json:"service,omitempty"`
-	LastMessageAt *string `json:"lastMessageAt,omitempty"`
-	MessageCount  int64   `json:"messageCount"`
-	UnreadCount   *int64  `json:"unreadCount"` // nil when this Messages schema lacks is_read
+	ID                  string  `json:"id"`
+	DisplayName         string  `json:"displayName"`
+	Service             *string `json:"service,omitempty"`
+	LastMessageAt       *string `json:"lastMessageAt,omitempty"`
+	MessageCount        int64   `json:"messageCount"`
+	UnreadCount         *int64  `json:"unreadCount"` // nil when this Messages schema lacks is_read
+	LatestIncomingRowID string  `json:"latestIncomingRowID"`
 }
 type Message struct {
 	ID          string       `json:"id"`
+	RowID       string       `json:"rowID"`
 	Text        string       `json:"text"`
 	SentAt      *string      `json:"sentAt,omitempty"`
 	IsFromMe    bool         `json:"isFromMe"`
@@ -275,7 +277,7 @@ func (d *database) chats(ctx context.Context, limit int, before *string, latest 
 		// Outgoing is_read values are recipient receipts, not local unread state.
 		unread = "SUM(CASE WHEN m.is_from_me=0 AND m.is_read=0 THEN 1 ELSE 0 END)"
 	}
-	query := fmt.Sprintf(`SELECT c.guid, %s, %s, MAX(m.date), COUNT(m.ROWID), c.ROWID, %s, %s, %s AS pin_order, %s
+	query := fmt.Sprintf(`SELECT c.guid, %s, %s, MAX(m.date), COUNT(m.ROWID), c.ROWID, %s, %s, %s AS pin_order, %s, MAX(CASE WHEN m.is_from_me=0 THEN m.ROWID ELSE 0 END)
 	 FROM chat c JOIN chat_message_join cmj ON cmj.chat_id=c.ROWID JOIN message m ON m.ROWID=cmj.message_id
 	 WHERE c.guid IS NOT NULL AND %s GROUP BY c.ROWID %s ORDER BY %s LIMIT ?`, column(d.chat, "c", "display_name"), column(d.chat, "c", "service_name"), column(d.chat, "c", "chat_identifier"), count, pinExpr, unread, filters, having, order)
 	args = append(args, limit+1)
@@ -292,7 +294,7 @@ func (d *database) chats(ctx context.Context, limit int, before *string, latest 
 	values := []chatRow{}
 	for rows.Next() {
 		var v chatRow
-		err = rows.Scan(&v.guid, &v.explicit, &v.chat.Service, &v.date, &v.chat.MessageCount, &v.row, &v.identifier, &v.participants, &v.pin, &v.chat.UnreadCount)
+		err = rows.Scan(&v.guid, &v.explicit, &v.chat.Service, &v.date, &v.chat.MessageCount, &v.row, &v.identifier, &v.participants, &v.pin, &v.chat.UnreadCount, &v.chat.LatestIncomingRowID)
 		if err != nil {
 			break
 		}
@@ -433,6 +435,7 @@ func (d *database) messages(ctx context.Context, id string, limit int, before *s
 			break
 		}
 		v.message.ID = strconv.FormatInt(v.row, 10)
+		v.message.RowID = v.message.ID
 		if id != nil {
 			v.message.ID = *id
 		}
